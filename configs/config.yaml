@@ -1,0 +1,28 @@
+# Global experiment configuration for the ZT-FedTrust federated learning simulator.
+
+seed: 42
+device: "cuda"  # "cuda" or "cpu"; automatically falls back to cpu if cuda is unavailable
+
+data:
+  dataset: "mnist"          # "mnist" | "cifar10"
+  data_dir: "./data_cache"  # where raw datasets are downloaded/cached
+  num_clients: 4
+  batch_size: 32
+  partition:
+    type: "iid"              # "iid" | "dirichlet"
+    alpha: 0.5                # Dirichlet concentration parameter (lower = more non-IID)
+
+model:
+  name: "cnn"                 # registered model name, see models/cnn.py
+
+federated:
+  num_rounds: 3
+  clients_per_round: 2
+  local_epochs: 1
+  learning_rate: 0.01
+  momentum: 0.9
+
+logging:
+  log_dir: "./results/logs"
+  log_level: "INFO"
+  results_dir: "./results"
