@@ -26,3 +26,17 @@ logging:
   log_dir: "./results/logs"
   log_level: "INFO"
   results_dir: "./results"
+
+# Zero Trust evaluation layer (Phase 2). Scores are computed and logged only —
+# not yet used for client selection or trust-weighted aggregation.
+trust:
+  enabled: true
+  initial_reputation: 0.80
+  reputation_alpha: 0.80
+  trust_threshold: 0.60  # defined for Phase 3+; unused for filtering in this phase
+  weights:
+    identity: 0.25
+    integrity: 0.20
+    behaviour: 0.20
+    reputation: 0.15
+    update_quality: 0.20

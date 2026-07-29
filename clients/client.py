@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import logging
 from dataclasses import dataclass
-from typing import Dict
+from typing import Any, Dict, List
 
 import torch
 import torch.nn as nn
@@ -28,6 +28,11 @@ class Client:
     Holds a private data shard and its own persistent local model, which the
     server syncs via `set_weights` before each round and reads back via
     `get_weights`/`train`.
+
+    The `*_score`/`trust_score`/`trust_history` attributes are populated by
+    `trust.trust_engine.TrustEngine` (Phase 2's Zero Trust evaluation layer)
+    once per round. They default to a neutral 1.0 ("not yet evaluated") and
+    are inert otherwise — nothing in FedAvg reads them in this phase.
     """
 
     def __init__(
@@ -50,6 +55,15 @@ class Client:
         self.local_epochs = local_epochs
         self.model = copy.deepcopy(model_template).to(device)
         self._logger = logging.getLogger(__name__)
+
+        # Zero Trust evaluation state (Phase 2), all in [0.0, 1.0].
+        self.identity_score: float = 1.0
+        self.integrity_score: float = 1.0
+        self.behaviour_score: float = 1.0
+        self.reputation_score: float = 1.0
+        self.update_quality_score: float = 1.0
+        self.trust_score: float = 1.0
+        self.trust_history: List[Dict[str, Any]] = []
 
     def get_weights(self) -> Dict[str, torch.Tensor]:
         """Return a detached CPU copy of the client's current local model weights."""

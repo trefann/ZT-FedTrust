@@ -5,9 +5,9 @@ from __future__ import annotations
 import argparse
 import csv
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import torch
 import yaml
@@ -26,6 +26,8 @@ from data.partition import (
 )
 from models.cnn import available_models, build_model
 from server.server import Server
+from trust.trust_engine import TrustEngine, TrustWeights
+from trust.trust_metrics import save_trust_history, save_trust_plots, save_trust_scores
 from utils.logger import setup_logger
 from utils.metrics import set_seed
 from utils.visualization import save_plots
@@ -66,6 +68,26 @@ class LoggingConfig:
 
 
 @dataclass
+class TrustWeightsConfig:
+    identity: float = 0.25
+    integrity: float = 0.20
+    behaviour: float = 0.20
+    reputation: float = 0.15
+    update_quality: float = 0.20
+
+
+@dataclass
+class TrustConfig:
+    """Zero Trust evaluation settings (Phase 2: scoring only, no filtering)."""
+
+    enabled: bool = True
+    initial_reputation: float = 0.80
+    reputation_alpha: float = 0.80
+    trust_threshold: float = 0.60
+    weights: TrustWeightsConfig = field(default_factory=TrustWeightsConfig)
+
+
+@dataclass
 class SimulationConfig:
     seed: int
     device: str
@@ -73,6 +95,9 @@ class SimulationConfig:
     model: ModelConfig
     federated: FederatedConfig
     logging: LoggingConfig
+    # Defaulted so existing call sites (and configs without a `trust:` block)
+    # keep working unmodified — trust evaluation is additive, not required.
+    trust: TrustConfig = field(default_factory=TrustConfig)
 
 
 def validate_config(config: SimulationConfig) -> None:
@@ -125,6 +150,26 @@ def validate_config(config: SimulationConfig) -> None:
             f"logging.log_level must be one of {_VALID_LOG_LEVELS}, got {config.logging.log_level!r}"
         )
 
+    if not 0.0 <= config.trust.initial_reputation <= 1.0:
+        errors.append(
+            f"trust.initial_reputation must be in [0, 1], got {config.trust.initial_reputation}"
+        )
+    if not 0.0 <= config.trust.reputation_alpha <= 1.0:
+        errors.append(f"trust.reputation_alpha must be in [0, 1], got {config.trust.reputation_alpha}")
+    if not 0.0 <= config.trust.trust_threshold <= 1.0:
+        errors.append(f"trust.trust_threshold must be in [0, 1], got {config.trust.trust_threshold}")
+    weight_values = {
+        "identity": config.trust.weights.identity,
+        "integrity": config.trust.weights.integrity,
+        "behaviour": config.trust.weights.behaviour,
+        "reputation": config.trust.weights.reputation,
+        "update_quality": config.trust.weights.update_quality,
+    }
+    if any(value < 0 for value in weight_values.values()):
+        errors.append(f"trust.weights values must all be >= 0, got {weight_values}")
+    if sum(weight_values.values()) <= 0:
+        errors.append("trust.weights must sum to a positive number")
+
     if errors:
         formatted = "\n  - ".join(errors)
         raise ValueError(f"Invalid configuration:\n  - {formatted}")
@@ -137,6 +182,9 @@ def load_config(config_path: str) -> SimulationConfig:
 
     data_raw = raw["data"]
     partition_raw = data_raw["partition"]
+    trust_raw = raw.get("trust", {})
+    weights_raw = trust_raw.get("weights", {})
+    default_weights = TrustWeightsConfig()
 
     config = SimulationConfig(
         seed=raw["seed"],
@@ -161,6 +209,19 @@ def load_config(config_path: str) -> SimulationConfig:
             log_dir=raw["logging"]["log_dir"],
             log_level=raw["logging"]["log_level"],
             results_dir=raw["logging"]["results_dir"],
+        ),
+        trust=TrustConfig(
+            enabled=trust_raw.get("enabled", True),
+            initial_reputation=trust_raw.get("initial_reputation", 0.80),
+            reputation_alpha=trust_raw.get("reputation_alpha", 0.80),
+            trust_threshold=trust_raw.get("trust_threshold", 0.60),
+            weights=TrustWeightsConfig(
+                identity=weights_raw.get("identity", default_weights.identity),
+                integrity=weights_raw.get("integrity", default_weights.integrity),
+                behaviour=weights_raw.get("behaviour", default_weights.behaviour),
+                reputation=weights_raw.get("reputation", default_weights.reputation),
+                update_quality=weights_raw.get("update_quality", default_weights.update_quality),
+            ),
         ),
     )
     validate_config(config)
@@ -233,6 +294,23 @@ def run_simulation(config: SimulationConfig) -> List[Dict[str, float]]:
     global_model = build_model(config.model.name, in_channels, num_classes)
     clients = build_clients(config, device, global_model)
 
+    trust_engine: Optional[TrustEngine] = None
+    if config.trust.enabled:
+        trust_weights = TrustWeights(
+            identity=config.trust.weights.identity,
+            integrity=config.trust.weights.integrity,
+            behaviour=config.trust.weights.behaviour,
+            reputation=config.trust.weights.reputation,
+            update_quality=config.trust.weights.update_quality,
+        )
+        trust_engine = TrustEngine(
+            weights=trust_weights,
+            initial_reputation=config.trust.initial_reputation,
+            reputation_alpha=config.trust.reputation_alpha,
+            seed=config.seed,
+        )
+        trust_engine.register_clients(clients.keys())
+
     server = Server(
         global_model=global_model,
         clients=clients,
@@ -240,6 +318,7 @@ def run_simulation(config: SimulationConfig) -> List[Dict[str, float]]:
         device=device,
         clients_per_round=config.federated.clients_per_round,
         seed=config.seed,
+        trust_engine=trust_engine,
     )
 
     history: List[Dict[str, float]] = []
@@ -248,6 +327,12 @@ def run_simulation(config: SimulationConfig) -> List[Dict[str, float]]:
 
     save_history(history, config.logging.results_dir)
     save_plots(history, config.logging.results_dir)
+
+    if trust_engine is not None:
+        save_trust_scores(trust_engine.records, config.logging.results_dir)
+        save_trust_history(trust_engine.records, config.logging.results_dir)
+        save_trust_plots(trust_engine.records, config.logging.results_dir)
+
     logger.info("Simulation complete. Results saved to %s", config.logging.results_dir)
     return history
 

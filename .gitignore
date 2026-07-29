@@ -6,4 +6,5 @@ data_cache/
 results/logs/
 results/*.csv
 results/*.png
+results/trust_plots/
 .pytest_cache/

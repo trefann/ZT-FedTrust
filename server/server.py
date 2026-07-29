@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import random
 import time
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import torch
 import torch.nn as nn
@@ -13,6 +13,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from clients.client import Client, LocalTrainResult
 from server.fedavg import federated_average
+from trust.trust_engine import TrustEngine
 from utils.metrics import evaluate_model
 
 
@@ -21,6 +22,14 @@ class Server:
 
     The server holds the authoritative global model and never sees client
     data directly — only the state dicts and sample counts clients return.
+
+    `trust_engine` is optional and defaults to `None`, in which case
+    `run_round` behaves exactly as in Phase 1: no trust evaluation, no
+    change to FedAvg. Passed a `TrustEngine`, `run_round` evaluates every
+    participating client's trust dimensions after local training and before
+    aggregation, purely as a side effect (writing onto each `Client` and
+    `trust_engine.records`) — the aggregation and evaluation logic below is
+    identical either way.
     """
 
     def __init__(
@@ -32,6 +41,7 @@ class Server:
         clients_per_round: int,
         eval_batch_size: int = 256,
         seed: int = 42,
+        trust_engine: Optional[TrustEngine] = None,
     ) -> None:
         self.global_model = global_model.to(device)
         self.clients = clients
@@ -40,6 +50,7 @@ class Server:
         self.clients_per_round = min(clients_per_round, len(clients))
         self._rng = random.Random(seed)
         self._logger = logging.getLogger(__name__)
+        self.trust_engine = trust_engine
 
     def select_clients(self) -> List[int]:
         """Sample a subset of client IDs to participate in the current round."""
@@ -57,6 +68,16 @@ class Server:
             client.set_weights(global_state)
             results.append(client.train())
 
+        round_trust_records = None
+        if self.trust_engine is not None:
+            # Evaluated on the pre-aggregation global state and this round's
+            # fresh local results, before FedAvg — matches the specified
+            # workflow (trust evaluation happens between local training and
+            # aggregation) without altering what FedAvg itself computes.
+            round_trust_records = self.trust_engine.evaluate_round(
+                round_num, results, self.clients, global_state
+            )
+
         aggregated_state = federated_average([(r.state_dict, r.num_samples) for r in results])
         self.global_model.load_state_dict(aggregated_state)
 
@@ -73,6 +94,10 @@ class Server:
             eval_accuracy,
             round_time,
         )
+
+        if self.trust_engine is not None:
+            self.trust_engine.print_round_summary(round_num, round_trust_records)
+
         return {
             "round": round_num,
             "train_loss": avg_train_loss,
