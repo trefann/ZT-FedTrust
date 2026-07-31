@@ -27,16 +27,22 @@ logging:
   log_level: "INFO"
   results_dir: "./results"
 
-# Zero Trust evaluation layer (Phase 2). Scores are computed and logged only —
-# not yet used for client selection or trust-weighted aggregation.
+# Zero Trust evaluation + trust-based selection/aggregation (Phase 2 + Phase 3).
 trust:
   enabled: true
   initial_reputation: 0.80
   reputation_alpha: 0.80
-  trust_threshold: 0.60  # defined for Phase 3+; unused for filtering in this phase
+  threshold_mode: fixed      # "fixed" | "adaptive" (mean - 0.5*stdev of current trust scores)
+  threshold: 0.60            # used directly in "fixed" mode; fallback in "adaptive" mode
+  participation_fraction: 0.50  # fraction of trust-eligible clients selected each round
   weights:
     identity: 0.25
     integrity: 0.20
     behaviour: 0.20
     reputation: 0.15
     update_quality: 0.20
+
+# Aggregation strategy: "fedavg" (plain sample-weighted, Phase 1) or
+# "trust_fedavg" (sample-and-trust-weighted, Phase 3). Switch via config only.
+aggregation:
+  strategy: trust_fedavg

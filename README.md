@@ -5,12 +5,15 @@ simulates multiple clients training locally on private data partitions,
 aggregates their updates on a central server via **FedAvg**, and evaluates
 the resulting global model.
 
-> **Scope note:** Phase 2 adds a Zero Trust evaluation layer that *computes
-> and logs* a trust score for every client, every round — but nothing yet
-> *acts* on those scores. There is no trust-based client selection,
-> trust-weighted aggregation, client rejection, or attack simulation. FedAvg
-> is byte-for-byte unchanged from Phase 1. Those behaviors are intentionally
-> left for a later phase to build on top of the scores computed here.
+> **Scope note:** Phase 2 added a Zero Trust evaluation layer that computes
+> and logs a trust score for every client, every round. Phase 3 (this
+> version) puts those scores to use: clients below a trust threshold are
+> excluded from participating, and aggregation can optionally weight
+> contributions by trust as well as sample count (`TrustFedAvg`). What's
+> still out of scope: no malicious-client simulation and no attack
+> detection — that's Phase 4. Switching between plain `FedAvg` and
+> `TrustFedAvg`, or between random and trust-based selection, is entirely
+> config-driven; see [Configuration](#configuration).
 
 ## Features
 
@@ -26,8 +29,11 @@ the resulting global model.
 - Automated test suite (unit + integration) covering every module
 - **Zero Trust evaluation layer (Phase 2):** every client is scored every
   round across 5 trust dimensions (identity, device integrity, behaviour,
-  historical reputation, update quality), logged to CSV and plotted —
-  scoring only, no effect on client selection or aggregation yet
+  historical reputation, update quality), logged to CSV and plotted
+- **Trust-based client selection + TrustFedAvg (Phase 3):** clients below a
+  configurable (fixed or adaptive) trust threshold are excluded before
+  training; aggregation can weight contributions by trust as well as sample
+  count. Both are swappable purely via `config.yaml` — no code changes.
 
 ## Project structure
 
@@ -43,24 +49,28 @@ zt-fedtrust/
 ├── clients/
 │   └── client.py          # simulated client: local training, get/set_weights
 ├── server/
-│   ├── server.py          # round orchestration, client selection, evaluation
-│   └── fedavg.py          # FedAvg aggregation
+│   ├── server.py            # round orchestration: selection, training, aggregation, evaluation
+│   ├── fedavg.py            # FedAvg aggregation (Phase 1, unchanged)
+│   ├── trust_fedavg.py      # TrustFedAvg + the aggregation strategy pattern (Phase 3)
+│   ├── selector.py          # ClientSelector: trust-threshold + participation-fraction selection (Phase 3)
+│   └── selection_metrics.py # selection/aggregation-weight CSV logging, console summary, plots (Phase 3)
 ├── simulation/
-│   └── run.py             # main entry point, config loading + validation
+│   └── run.py             # main entry point, config loading + validation, --compare mode
 ├── utils/
 │   ├── logger.py          # logging setup
 │   ├── metrics.py         # evaluation metrics + seeding
 │   └── visualization.py   # accuracy/loss plot generation
-├── trust/                  # Zero Trust evaluation layer (Phase 2, scoring only)
+├── trust/                  # Zero Trust evaluation + policy
 │   ├── identity.py         # dimension 1: IdentityVerifier
 │   ├── integrity.py        # dimension 2: DeviceIntegrityEvaluator
 │   ├── behaviour.py        # dimension 3: BehaviourAnalyzer
 │   ├── reputation.py       # dimension 4: ReputationManager
 │   ├── update_quality.py   # dimension 5: UpdateQualityEvaluator
-│   ├── trust_engine.py     # TrustEngine: composes all 5 into one score
-│   └── trust_metrics.py    # TrustRecord, CSV logging, plots, round summary
+│   ├── trust_engine.py     # TrustEngine: composes all 5 into one score (Phase 2)
+│   ├── trust_metrics.py    # TrustRecord, CSV logging, plots, round summary (Phase 2)
+│   └── trust_policy.py     # TrustPolicy: fixed/adaptive threshold + eligibility (Phase 3)
 ├── tests/                  # pytest unit + integration tests (synthetic data, offline)
-├── results/                 # logs, history.csv, plots, trust_scores/history/plots (generated)
+├── results/                 # logs, history/trust/selection CSVs, plots (generated)
 ├── requirements.txt
 ├── requirements-dev.txt     # adds pytest, for running the test suite
 └── README.md
@@ -95,9 +105,30 @@ Datasets are downloaded automatically to `data.data_dir` (default
 - `trust_scores.csv` — every client's 5 trust-dimension scores, every round (if `trust.enabled`)
 - `trust_history.csv` — per-round trust averages/min/max, for tracking evolution over time
 - `trust_plots/` — average trust, reputation, behaviour, and update-quality vs round, plus a trust-score distribution histogram
+- `client_selection.csv` — per-round threshold, eligible/selected/rejected counts, trust stats (if trust-based selection is active)
+- `aggregation_weights.csv` — every participating client's trust, dataset size, and actual normalised aggregation weight, every round
+- `selection_plots/` — client trust distribution, selection timeline (selected vs rejected), threshold evolution, aggregation weight distribution
 - log files under `logging.log_dir`
 
-Each round also prints a concise console summary once FedAvg completes:
+Each round prints a concise console summary once FedAvg completes. With
+trust-based selection active (Phase 3):
+
+```
+----------------------------------------
+Round 8
+Threshold: 0.62
+Clients Available: 20
+Eligible: 15
+Selected: 10
+Rejected: 5
+Average Trust: 0.81
+Aggregation: TrustFedAvg
+Global Accuracy: 94.2%
+----------------------------------------
+```
+
+With `trust.enabled: true` but no trust-based selection (Phase 2 only), the
+simpler Phase 2 summary is printed instead:
 
 ```
 Round 1
@@ -107,6 +138,19 @@ Lowest Trust Client: Client 0 (0.86)
 Average Reputation: 0.82
 FedAvg Completed Successfully
 ```
+
+### Comparing FedAvg vs TrustFedAvg
+
+```bash
+python simulation/run.py --config configs/config.yaml --compare
+```
+
+Runs the *same* trust-based client selection (same seed) twice — once per
+aggregation strategy — so the only variable is the aggregation formula
+itself, then saves `selection_plots/global_accuracy_comparison.png`. Note
+this overwrites the standard per-run outputs (`history.csv`, etc.) with the
+second run's (`trust_fedavg`) results; the comparison plot is captured from
+both runs' in-memory histories before that happens.
 
 ## Configuration
 
@@ -131,11 +175,14 @@ into training.
 | `federated`  | `local_epochs`          | local training epochs per client per round        |
 | `federated`  | `learning_rate`, `momentum` | local SGD optimizer settings                 |
 | `logging`    | `log_dir`, `results_dir`, `log_level` | output locations and verbosity      |
-| `trust`      | `enabled`               | turn Zero Trust evaluation on/off (Phase 1 behavior when `false`) |
+| `trust`      | `enabled`               | turn Zero Trust evaluation **and** trust-based selection on/off (Phase 1/2-only random selection when `false`) |
 | `trust`      | `initial_reputation`    | starting reputation for a client's first round    |
 | `trust`      | `reputation_alpha`      | reputation smoothing factor (higher = more historical weight) |
-| `trust`      | `trust_threshold`       | defined for a future phase; **not used for filtering yet** |
+| `trust`      | `threshold_mode`        | `"fixed"` or `"adaptive"` (`mean(trust) - 0.5*stdev(trust)`) |
+| `trust`      | `threshold`             | trust threshold: used directly in `"fixed"` mode, fallback in `"adaptive"` mode |
+| `trust`      | `participation_fraction` | fraction of *trust-eligible* clients selected each round, in (0, 1] |
 | `trust.weights` | `identity`, `integrity`, `behaviour`, `reputation`, `update_quality` | relative weight of each dimension in the composite trust score |
+| `aggregation` | `strategy`             | `"fedavg"` (plain, Phase 1) or `"trust_fedavg"` (trust-weighted, Phase 3) |
 
 ## Zero Trust evaluation (Phase 2)
 
@@ -155,17 +202,59 @@ Trust = w1*Identity + w2*Integrity + w3*Behaviour + w4*Reputation + w5*UpdateQua
 | Historical Reputation | `trust/reputation.py` — `ReputationManager` | exponential smoothing: `Reputation_new = alpha*Reputation_old + (1-alpha)*CurrentTrust`, where `CurrentTrust` is a per-round signal computed from the other four dimensions (kept separate from the final composite score to avoid a circular update). |
 | Update Quality | `trust/update_quality.py` — `UpdateQualityEvaluator` | computed from real training signal: loss improvement vs. the client's own previous round, cosine similarity with the round's sample-weighted mean update direction, and min-max-normalised update magnitude. |
 
-**This phase is observation-only.** `Server.run_round` calls `TrustEngine`
-purely for its side effects (writing `Client.trust_score`/`trust_history`,
-appending to `TrustEngine.records`); its return value is never read by
-FedAvg. A test (`tests/test_trust.py::test_trust_evaluation_does_not_change_fedavg_result`)
-verifies that enabling trust evaluation produces byte-identical aggregation
-results to running with `trust.enabled: false`.
+In Phase 2, `Server.run_round` called `TrustEngine` purely for its side
+effects (writing `Client.trust_score`/`trust_history`), between local
+training and aggregation. Phase 3's integration moved that call to *after*
+aggregation/evaluation, matching its own workflow diagram — safe because
+`TrustEngine.evaluate_round` only ever reads `results` and the pre-training
+global-state snapshot, neither of which aggregation or evaluation touch, so
+trust scores come out identical regardless of exactly where in the round
+it's called (still verified by
+`tests/test_trust.py::test_trust_evaluation_does_not_change_fedavg_result`).
 
-`Client.get_weights()`/`set_weights()` plus `TrustEngine.records` /
-`Client.trust_score` are the intended integration points for a future phase
-to add trust-based client selection or trust-weighted aggregation, without
-needing to touch this phase's code.
+Crucially, the trust scores a round's *aggregation* uses are always
+snapshotted **before** that round's own `TrustEngine` evaluation runs — using
+a client's just-computed update-quality score to help weight that same
+update would be circular. Selection (see below) works the same way: each
+round's threshold check uses trust as it stood at the *end of the previous
+round*.
+
+## Trust-based selection & TrustFedAvg (Phase 3)
+
+Each round now begins by determining who's trusted enough to participate:
+
+```
+All Clients -> Evaluate Trust (persisted from last round) -> Evaluate Threshold
+            -> Eligible Clients -> Participation Fraction -> Selected Clients
+```
+
+`TrustPolicy` (`trust/trust_policy.py`) owns stage 1 — a `threshold_mode` of
+`"fixed"` uses the configured `threshold` directly; `"adaptive"` recomputes
+it every round as `mean(trust) - 0.5*stdev(trust)` over the current client
+pool (falling back to the fixed value with fewer than 2 clients). `Rejected`
+in `client_selection.csv`/the console summary specifically means "failed the
+trust threshold" (`total - eligible`), distinct from simply not being
+sampled in stage 2.
+
+`ClientSelector` (`server/selector.py`) owns stage 2 — sampling
+`participation_fraction` of the eligible pool via its own seeded RNG,
+independent of `Server`'s legacy random-selection stream. If *no* client
+meets the threshold, `Server.run_round` raises rather than silently
+training zero clients.
+
+**TrustFedAvg** (`server/trust_fedavg.py`) extends FedAvg's
+`Sum(weights*samples)/Sum(samples)` to
+`Sum(weights*samples*trust)/Sum(samples*trust)`. Both strategies share one
+calling convention (`ClientUpdate` in, `(aggregated_state, per_client_weights)`
+out), registered in a small strategy map — `Server` never branches on the
+strategy name; `aggregation.strategy` in config is the only thing that
+changes. `"fedavg"` delegates to the untouched Phase 1
+`federated_average`, so it's numerically identical to before.
+
+Both Phase 3 collaborators are optional constructor arguments on `Server`
+(`client_selector`, `aggregation_strategy`), defaulting to `None`/`"fedavg"`
+— every Phase 1/2 test constructs `Server` without them and is completely
+unaffected.
 
 ## Client API
 
@@ -176,8 +265,9 @@ Each `Client` owns a persistent local model and exposes:
   (updated weights, sample count, average loss)
 - `get_weights()` — read back the client's current local weights
 
-`Server.run_round` drives this cycle: broadcast → `set_weights` → `train` →
-collect → `federated_average` → evaluate.
+`Server.run_round` drives this cycle: select → broadcast → `set_weights` →
+`train` → collect → aggregate (via whichever strategy `aggregation_strategy`
+names) → evaluate → trust update.
 
 ## Testing
 
@@ -201,6 +291,13 @@ covers:
   determinism), `TrustEngine` composition and determinism, CSV/plot
   generation, and — the key regression guard — that enabling trust
   evaluation produces identical FedAvg results to Phase 1
+- Selection + TrustFedAvg (`tests/test_phase3.py`): fixed/adaptive threshold
+  correctness, that a below-threshold client is never selected, aggregation
+  weights always sum to 1.0, `trust_weighted_average` matches a
+  hand-computed example, `fedavg_strategy` is numerically identical to the
+  legacy `federated_average`, switching strategy requires only a config
+  string, and full-pipeline determinism (identical selection + accuracy
+  across two runs with the same seed)
 
 ## Extensibility
 
@@ -211,14 +308,19 @@ covers:
   then wire it into `simulation/run.py`.
 - **New models**: implement an `nn.Module` in `models/` and register it in
   `models/cnn.py`'s `_MODEL_REGISTRY`.
-- **New aggregation rules**: implement an alternative to
-  `server/fedavg.py::federated_average` and swap it into `Server.run_round`.
+- **New aggregation strategies**: write a function matching
+  `server.trust_fedavg.AggregationStrategy` (`List[ClientUpdate] ->
+  (aggregated_state, per_client_weights)`) and register it in
+  `trust_fedavg.py`'s `_STRATEGIES` — no other code needs to change.
+- **New selection policies**: `TrustPolicy`'s threshold strategies are a
+  small registry (`trust_policy._THRESHOLD_STRATEGIES`) keyed by
+  `threshold_mode`; add a new `ThresholdStrategy` function and register it
+  the same way.
 - **New trust metrics**: `UpdateQualityEvaluator.metric_weights` and the
   per-dimension modules are designed so a new signal is just: compute it,
   add one entry to a weights dict, done — see the module docstrings in `trust/`.
-- **Trust-based client selection / trust-weighted aggregation / attack
-  simulation** (future phases): build directly on `Client.trust_score`,
-  `Client.trust_history`, and `TrustEngine.records` — e.g. filter
-  `Server.select_clients()`'s output by `trust_threshold`, or weight
-  `federated_average`'s inputs by trust instead of only sample count. No
-  refactoring of this phase's code should be required.
+- **Malicious-client simulation / attack detection** (Phase 4): the pieces
+  to build on are all here — inject bad behavior/updates via `Client`,
+  observe how `TrustPolicy`/`TrustEngine` scores and (fails to) reject them,
+  and compare against `ClientSelector`'s decisions in `client_selection.csv`.
+  No refactoring of this phase's code should be required.

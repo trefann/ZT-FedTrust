@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -25,9 +25,18 @@ from data.partition import (
     partition_iid,
 )
 from models.cnn import available_models, build_model
+from server.selection_metrics import (
+    save_accuracy_comparison_plot,
+    save_aggregation_weights_csv,
+    save_selection_csv,
+    save_selection_plots,
+)
+from server.selector import ClientSelector
 from server.server import Server
+from server.trust_fedavg import SUPPORTED_AGGREGATION_STRATEGIES
 from trust.trust_engine import TrustEngine, TrustWeights
 from trust.trust_metrics import save_trust_history, save_trust_plots, save_trust_scores
+from trust.trust_policy import SUPPORTED_THRESHOLD_MODES, TrustPolicy
 from utils.logger import setup_logger
 from utils.metrics import set_seed
 from utils.visualization import save_plots
@@ -78,13 +87,28 @@ class TrustWeightsConfig:
 
 @dataclass
 class TrustConfig:
-    """Zero Trust evaluation settings (Phase 2: scoring only, no filtering)."""
+    """Zero Trust evaluation + trust-based selection settings.
+
+    Phase 2 introduced scoring only. Phase 3 adds `threshold_mode`,
+    `threshold` (renamed from Phase 2's unused `trust_threshold`, now
+    actually enforced), and `participation_fraction` to drive real
+    trust-based client selection.
+    """
 
     enabled: bool = True
     initial_reputation: float = 0.80
     reputation_alpha: float = 0.80
-    trust_threshold: float = 0.60
+    threshold_mode: str = "fixed"
+    threshold: float = 0.60
+    participation_fraction: float = 0.50
     weights: TrustWeightsConfig = field(default_factory=TrustWeightsConfig)
+
+
+@dataclass
+class AggregationConfig:
+    """Selects which aggregation strategy `Server` uses (see `server/trust_fedavg.py`)."""
+
+    strategy: str = "fedavg"
 
 
 @dataclass
@@ -95,9 +119,10 @@ class SimulationConfig:
     model: ModelConfig
     federated: FederatedConfig
     logging: LoggingConfig
-    # Defaulted so existing call sites (and configs without a `trust:` block)
-    # keep working unmodified — trust evaluation is additive, not required.
+    # Defaulted so existing call sites (and configs without a `trust:`/
+    # `aggregation:` block) keep working unmodified — both are additive.
     trust: TrustConfig = field(default_factory=TrustConfig)
+    aggregation: AggregationConfig = field(default_factory=AggregationConfig)
 
 
 def validate_config(config: SimulationConfig) -> None:
@@ -156,8 +181,17 @@ def validate_config(config: SimulationConfig) -> None:
         )
     if not 0.0 <= config.trust.reputation_alpha <= 1.0:
         errors.append(f"trust.reputation_alpha must be in [0, 1], got {config.trust.reputation_alpha}")
-    if not 0.0 <= config.trust.trust_threshold <= 1.0:
-        errors.append(f"trust.trust_threshold must be in [0, 1], got {config.trust.trust_threshold}")
+    if not 0.0 <= config.trust.threshold <= 1.0:
+        errors.append(f"trust.threshold must be in [0, 1], got {config.trust.threshold}")
+    if config.trust.threshold_mode not in SUPPORTED_THRESHOLD_MODES:
+        errors.append(
+            f"trust.threshold_mode must be one of {SUPPORTED_THRESHOLD_MODES}, "
+            f"got {config.trust.threshold_mode!r}"
+        )
+    if not 0.0 < config.trust.participation_fraction <= 1.0:
+        errors.append(
+            f"trust.participation_fraction must be in (0, 1], got {config.trust.participation_fraction}"
+        )
     weight_values = {
         "identity": config.trust.weights.identity,
         "integrity": config.trust.weights.integrity,
@@ -169,6 +203,12 @@ def validate_config(config: SimulationConfig) -> None:
         errors.append(f"trust.weights values must all be >= 0, got {weight_values}")
     if sum(weight_values.values()) <= 0:
         errors.append("trust.weights must sum to a positive number")
+
+    if config.aggregation.strategy not in SUPPORTED_AGGREGATION_STRATEGIES:
+        errors.append(
+            f"aggregation.strategy must be one of {SUPPORTED_AGGREGATION_STRATEGIES}, "
+            f"got {config.aggregation.strategy!r}"
+        )
 
     if errors:
         formatted = "\n  - ".join(errors)
@@ -214,7 +254,9 @@ def load_config(config_path: str) -> SimulationConfig:
             enabled=trust_raw.get("enabled", True),
             initial_reputation=trust_raw.get("initial_reputation", 0.80),
             reputation_alpha=trust_raw.get("reputation_alpha", 0.80),
-            trust_threshold=trust_raw.get("trust_threshold", 0.60),
+            threshold_mode=trust_raw.get("threshold_mode", "fixed"),
+            threshold=trust_raw.get("threshold", 0.60),
+            participation_fraction=trust_raw.get("participation_fraction", 0.50),
             weights=TrustWeightsConfig(
                 identity=weights_raw.get("identity", default_weights.identity),
                 integrity=weights_raw.get("integrity", default_weights.integrity),
@@ -223,6 +265,7 @@ def load_config(config_path: str) -> SimulationConfig:
                 update_quality=weights_raw.get("update_quality", default_weights.update_quality),
             ),
         ),
+        aggregation=AggregationConfig(strategy=raw.get("aggregation", {}).get("strategy", "fedavg")),
     )
     validate_config(config)
     return config
@@ -295,6 +338,7 @@ def run_simulation(config: SimulationConfig) -> List[Dict[str, float]]:
     clients = build_clients(config, device, global_model)
 
     trust_engine: Optional[TrustEngine] = None
+    client_selector: Optional[ClientSelector] = None
     if config.trust.enabled:
         trust_weights = TrustWeights(
             identity=config.trust.weights.identity,
@@ -311,6 +355,17 @@ def run_simulation(config: SimulationConfig) -> List[Dict[str, float]]:
         )
         trust_engine.register_clients(clients.keys())
 
+        # Trust-based selection (Phase 3): replaces random `clients_per_round`
+        # sampling. Gated on the same `trust.enabled` flag as `TrustEngine`,
+        # since selecting by trust without ever computing trust wouldn't
+        # mean anything (everyone would sit at the neutral 1.0 default).
+        policy = TrustPolicy(threshold_mode=config.trust.threshold_mode, threshold=config.trust.threshold)
+        client_selector = ClientSelector(
+            policy=policy,
+            participation_fraction=config.trust.participation_fraction,
+            seed=config.seed,
+        )
+
     server = Server(
         global_model=global_model,
         clients=clients,
@@ -319,6 +374,8 @@ def run_simulation(config: SimulationConfig) -> List[Dict[str, float]]:
         clients_per_round=config.federated.clients_per_round,
         seed=config.seed,
         trust_engine=trust_engine,
+        client_selector=client_selector,
+        aggregation_strategy=config.aggregation.strategy,
     )
 
     history: List[Dict[str, float]] = []
@@ -333,8 +390,47 @@ def run_simulation(config: SimulationConfig) -> List[Dict[str, float]]:
         save_trust_history(trust_engine.records, config.logging.results_dir)
         save_trust_plots(trust_engine.records, config.logging.results_dir)
 
+    if client_selector is not None:
+        save_selection_csv(server.selection_records, config.logging.results_dir)
+        save_aggregation_weights_csv(server.aggregation_weight_records, config.logging.results_dir)
+        final_trust_scores = [client.trust_score for client in clients.values()]
+        save_selection_plots(
+            server.selection_records,
+            server.aggregation_weight_records,
+            final_trust_scores,
+            config.logging.results_dir,
+        )
+
     logger.info("Simulation complete. Results saved to %s", config.logging.results_dir)
     return history
+
+
+def run_comparison(config_path: str) -> None:
+    """Run the same trust-based client selection under both aggregation
+    strategies (`fedavg` vs `trust_fedavg`) and plot their global accuracy
+    side by side.
+
+    Selection is held identical between the two runs (same seed, same trust
+    thresholding) so the only variable being compared is the aggregation
+    formula itself — isolating the effect Phase 3 introduces.
+
+    Note: each `run_simulation` call writes the standard per-run outputs
+    (history.csv, trust_scores.csv, etc.) to `logging.results_dir`, so after
+    both runs those files reflect only the *second* run (trust_fedavg). The
+    comparison plot itself is captured from each run's in-memory history
+    before that happens, so it always reflects both.
+    """
+    base_config = load_config(config_path)
+    if not base_config.trust.enabled:
+        raise ValueError("run_comparison requires trust.enabled: true (selection must be trust-based).")
+
+    histories: Dict[str, List[Dict[str, float]]] = {}
+    for strategy in ("fedavg", "trust_fedavg"):
+        config = replace(base_config, aggregation=AggregationConfig(strategy=strategy))
+        display_name = "FedAvg" if strategy == "fedavg" else "TrustFedAvg"
+        histories[display_name] = run_simulation(config)
+
+    save_accuracy_comparison_plot(histories, base_config.logging.results_dir)
 
 
 def parse_args() -> argparse.Namespace:
@@ -345,13 +441,22 @@ def parse_args() -> argparse.Namespace:
         default=str(Path(__file__).resolve().parent.parent / "configs" / "config.yaml"),
         help="Path to the YAML configuration file.",
     )
+    parser.add_argument(
+        "--compare",
+        action="store_true",
+        help="Run both fedavg and trust_fedavg (same trust-based selection) and plot a global "
+        "accuracy comparison, instead of a single run using the config's aggregation.strategy.",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    config = load_config(args.config)
-    run_simulation(config)
+    if args.compare:
+        run_comparison(args.config)
+    else:
+        config = load_config(args.config)
+        run_simulation(config)
 
 
 if __name__ == "__main__":

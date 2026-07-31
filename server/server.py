@@ -12,7 +12,13 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 
 from clients.client import Client, LocalTrainResult
-from server.fedavg import federated_average
+from server.selection_metrics import (
+    AggregationWeightRecord,
+    SelectionRecord,
+    print_selection_summary,
+)
+from server.selector import ClientSelector
+from server.trust_fedavg import ClientUpdate, get_aggregation_strategy
 from trust.trust_engine import TrustEngine
 from utils.metrics import evaluate_model
 
@@ -23,13 +29,21 @@ class Server:
     The server holds the authoritative global model and never sees client
     data directly — only the state dicts and sample counts clients return.
 
-    `trust_engine` is optional and defaults to `None`, in which case
-    `run_round` behaves exactly as in Phase 1: no trust evaluation, no
-    change to FedAvg. Passed a `TrustEngine`, `run_round` evaluates every
-    participating client's trust dimensions after local training and before
-    aggregation, purely as a side effect (writing onto each `Client` and
-    `trust_engine.records`) — the aggregation and evaluation logic below is
-    identical either way.
+    Two optional collaborators layer additively on top of Phase 1's plain
+    FedAvg, each defaulting to `None`/`"fedavg"` so existing callers (and
+    all Phase 1/2 tests) get byte-for-byte identical behavior:
+
+      - `trust_engine` (Phase 2): if set, evaluates every participating
+        client's trust dimensions each round.
+      - `client_selector` (Phase 3): if set, replaces random
+        `clients_per_round` sampling with trust-threshold + participation-
+        fraction selection; combined with `aggregation_strategy="trust_fedavg"`,
+        aggregation is weighted by trust as well as sample count.
+
+    `aggregation_strategy` always goes through the same strategy-pattern
+    dispatch (`server.trust_fedavg.get_aggregation_strategy`); `"fedavg"`
+    (the default) delegates to `server.fedavg.federated_average` unchanged,
+    so it is numerically identical to Phase 1/2's original inline call.
     """
 
     def __init__(
@@ -42,6 +56,8 @@ class Server:
         eval_batch_size: int = 256,
         seed: int = 42,
         trust_engine: Optional[TrustEngine] = None,
+        client_selector: Optional[ClientSelector] = None,
+        aggregation_strategy: str = "fedavg",
     ) -> None:
         self.global_model = global_model.to(device)
         self.clients = clients
@@ -50,16 +66,49 @@ class Server:
         self.clients_per_round = min(clients_per_round, len(clients))
         self._rng = random.Random(seed)
         self._logger = logging.getLogger(__name__)
+
         self.trust_engine = trust_engine
+        self.client_selector = client_selector
+        self.aggregation_strategy_name = aggregation_strategy
+        self._aggregation_fn = get_aggregation_strategy(aggregation_strategy)
+
+        # Phase 3 per-round logs, mirroring how `trust_engine.records`
+        # accumulates across a run. Only populated when `client_selector`
+        # is set — see `run_round`.
+        self.selection_records: List[SelectionRecord] = []
+        self.aggregation_weight_records: List[AggregationWeightRecord] = []
 
     def select_clients(self) -> List[int]:
-        """Sample a subset of client IDs to participate in the current round."""
+        """Sample a subset of client IDs to participate in the current round.
+
+        Legacy Phase 1/2 random selection, used only when `client_selector`
+        is `None`.
+        """
         return self._rng.sample(list(self.clients.keys()), self.clients_per_round)
 
     def run_round(self, round_num: int) -> Dict[str, float]:
-        """Run a single federated round: broadcast, local training, aggregation, evaluation."""
+        """Run a single federated round.
+
+        Phase 3 workflow when `client_selector` is set: determine the trust
+        threshold and select trusted clients, broadcast, train locally,
+        collect updates, aggregate (trust-weighted or plain, per
+        `aggregation_strategy`), evaluate the global model, then update
+        trust/reputation for this round's participants.
+
+        Falls back to Phase 1/2's exact behavior (random `clients_per_round`
+        sampling) when `client_selector` is `None`.
+        """
         start_time = time.time()
-        selected_ids = self.select_clients()
+
+        if self.client_selector is not None:
+            selected_ids = self.client_selector.select(self.clients)
+            if not selected_ids:
+                raise RuntimeError(
+                    f"Round {round_num}: no client meets the trust threshold; cannot proceed."
+                )
+        else:
+            selected_ids = self.select_clients()
+
         global_state = self.global_model.state_dict()
 
         results: List[LocalTrainResult] = []
@@ -68,17 +117,23 @@ class Server:
             client.set_weights(global_state)
             results.append(client.train())
 
-        round_trust_records = None
-        if self.trust_engine is not None:
-            # Evaluated on the pre-aggregation global state and this round's
-            # fresh local results, before FedAvg — matches the specified
-            # workflow (trust evaluation happens between local training and
-            # aggregation) without altering what FedAvg itself computes.
-            round_trust_records = self.trust_engine.evaluate_round(
-                round_num, results, self.clients, global_state
+        # Snapshot trust *before* this round's evaluation runs: aggregation
+        # must weight by trust as it stood when these clients were selected
+        # to train, not by a score derived from the very update it's about
+        # to help weight (that would be circular).
+        trust_at_selection_time = {
+            client_id: self.clients[client_id].trust_score for client_id in selected_ids
+        }
+        updates = [
+            ClientUpdate(
+                client_id=r.client_id,
+                state_dict=r.state_dict,
+                num_samples=r.num_samples,
+                trust=trust_at_selection_time[r.client_id],
             )
-
-        aggregated_state = federated_average([(r.state_dict, r.num_samples) for r in results])
+            for r in results
+        ]
+        aggregated_state, aggregation_weights = self._aggregation_fn(updates)
         self.global_model.load_state_dict(aggregated_state)
 
         eval_loss, eval_accuracy = evaluate_model(self.global_model, self.test_loader, self.device)
@@ -95,7 +150,48 @@ class Server:
             round_time,
         )
 
+        round_trust_records = None
         if self.trust_engine is not None:
+            # Only reads `results` and the pre-training `global_state`
+            # snapshot — neither aggregation nor evaluation touch those —
+            # so trust scores come out identical regardless of exactly
+            # where in the round this runs (see
+            # tests/test_trust.py::test_trust_evaluation_does_not_change_fedavg_result).
+            round_trust_records = self.trust_engine.evaluate_round(
+                round_num, results, self.clients, global_state
+            )
+
+        if self.client_selector is not None:
+            stats = self.client_selector.policy.calculate_selection_statistics()
+            selection_record = SelectionRecord(
+                round_num=round_num,
+                threshold=stats.threshold_used,
+                total_clients=stats.total_clients,
+                eligible_clients=stats.eligible_clients,
+                selected_clients=len(selected_ids),
+                rejected_clients=stats.total_clients - stats.eligible_clients,
+                average_trust=stats.average_trust,
+                min_trust=stats.min_trust,
+                max_trust=stats.max_trust,
+            )
+            self.selection_records.append(selection_record)
+
+            num_samples_by_client = {u.client_id: u.num_samples for u in updates}
+            for client_id, weight in aggregation_weights.items():
+                self.aggregation_weight_records.append(
+                    AggregationWeightRecord(
+                        round_num=round_num,
+                        client_id=client_id,
+                        trust=trust_at_selection_time[client_id],
+                        dataset_size=num_samples_by_client[client_id],
+                        aggregation_weight=weight,
+                    )
+                )
+
+            print_selection_summary(selection_record, self.aggregation_strategy_name, eval_accuracy)
+        elif self.trust_engine is not None:
+            # Phase 2 standalone (no Phase 3 selection active): keep its
+            # own simpler summary exactly as before.
             self.trust_engine.print_round_summary(round_num, round_trust_records)
 
         return {

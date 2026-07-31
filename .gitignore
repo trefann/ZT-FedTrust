@@ -7,4 +7,5 @@ results/logs/
 results/*.csv
 results/*.png
 results/trust_plots/
+results/selection_plots/
 .pytest_cache/
