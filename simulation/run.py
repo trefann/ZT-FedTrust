@@ -16,7 +16,11 @@ import yaml
 # the project root on sys.path so sibling top-level packages are importable.
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
+from attacks import SUPPORTED_ATTACK_TYPES
+from attacks.byzantine import SUPPORTED_BYZANTINE_STRATEGIES
+from attacks.model_poisoning import MAX_SCALE_FACTOR
 from clients.client import Client
+from clients.malicious_client import assign_attacks, known_identity_ids
 from data.dataset import SUPPORTED_DATASETS, dataset_shape, load_dataset
 from data.partition import (
     SUPPORTED_PARTITION_TYPES,
@@ -30,6 +34,12 @@ from server.selection_metrics import (
     save_aggregation_weights_csv,
     save_selection_csv,
     save_selection_plots,
+)
+from evaluation.security_metrics import (
+    build_round_security_records,
+    save_attack_history_csv,
+    save_security_metrics_csv,
+    save_security_plots,
 )
 from server.selector import ClientSelector
 from server.server import Server
@@ -112,6 +122,54 @@ class AggregationConfig:
 
 
 @dataclass
+class LabelFlippingConfig:
+    enabled: bool = False
+    probability: float = 1.0
+    label_map: Optional[Dict[int, int]] = None
+
+
+@dataclass
+class ModelPoisoningConfig:
+    enabled: bool = False
+    probability: float = 1.0
+    scale_factor: float = 5.0
+
+
+@dataclass
+class ByzantineConfig:
+    enabled: bool = False
+    probability: float = 1.0
+    strategy: str = "random"
+
+
+@dataclass
+class SybilConfig:
+    enabled: bool = False
+    number_of_identities: int = 3
+    probability: float = 1.0
+
+
+@dataclass
+class AttackConfig:
+    """Phase 4 adversarial attack simulation settings.
+
+    `active_attack` selects which of the four attack blocks below actually
+    applies to malicious clients this run; each block's own settings are
+    only read when it's the active one (or, for `sybil`, always read for
+    its underlying-attack probability). All disabled by default so plain
+    Phase 1-3 runs are completely unaffected.
+    """
+
+    enabled: bool = False
+    malicious_client_fraction: float = 0.20
+    active_attack: str = "label_flipping"
+    label_flipping: LabelFlippingConfig = field(default_factory=LabelFlippingConfig)
+    model_poisoning: ModelPoisoningConfig = field(default_factory=ModelPoisoningConfig)
+    byzantine: ByzantineConfig = field(default_factory=ByzantineConfig)
+    sybil: SybilConfig = field(default_factory=SybilConfig)
+
+
+@dataclass
 class SimulationConfig:
     seed: int
     device: str
@@ -120,9 +178,11 @@ class SimulationConfig:
     federated: FederatedConfig
     logging: LoggingConfig
     # Defaulted so existing call sites (and configs without a `trust:`/
-    # `aggregation:` block) keep working unmodified — both are additive.
+    # `aggregation:`/`attacks:` block) keep working unmodified — all three
+    # are additive.
     trust: TrustConfig = field(default_factory=TrustConfig)
     aggregation: AggregationConfig = field(default_factory=AggregationConfig)
+    attacks: AttackConfig = field(default_factory=AttackConfig)
 
 
 def validate_config(config: SimulationConfig) -> None:
@@ -210,6 +270,41 @@ def validate_config(config: SimulationConfig) -> None:
             f"got {config.aggregation.strategy!r}"
         )
 
+    if not 0.0 <= config.attacks.malicious_client_fraction <= 1.0:
+        errors.append(
+            f"attacks.malicious_client_fraction must be in [0, 1], "
+            f"got {config.attacks.malicious_client_fraction}"
+        )
+    if config.attacks.active_attack not in SUPPORTED_ATTACK_TYPES:
+        errors.append(
+            f"attacks.active_attack must be one of {SUPPORTED_ATTACK_TYPES}, "
+            f"got {config.attacks.active_attack!r}"
+        )
+    for attack_name, probability in (
+        ("label_flipping", config.attacks.label_flipping.probability),
+        ("model_poisoning", config.attacks.model_poisoning.probability),
+        ("byzantine", config.attacks.byzantine.probability),
+        ("sybil", config.attacks.sybil.probability),
+    ):
+        if not 0.0 <= probability <= 1.0:
+            errors.append(f"attacks.{attack_name}.probability must be in [0, 1], got {probability}")
+    scale_factor = config.attacks.model_poisoning.scale_factor
+    if not 0.0 < abs(scale_factor) <= MAX_SCALE_FACTOR:
+        errors.append(
+            f"attacks.model_poisoning.scale_factor must be in (0, {MAX_SCALE_FACTOR}] in "
+            f"magnitude, got {scale_factor}"
+        )
+    if config.attacks.byzantine.strategy not in SUPPORTED_BYZANTINE_STRATEGIES:
+        errors.append(
+            f"attacks.byzantine.strategy must be one of {SUPPORTED_BYZANTINE_STRATEGIES}, "
+            f"got {config.attacks.byzantine.strategy!r}"
+        )
+    if config.attacks.sybil.number_of_identities < 1:
+        errors.append(
+            f"attacks.sybil.number_of_identities must be >= 1, "
+            f"got {config.attacks.sybil.number_of_identities}"
+        )
+
     if errors:
         formatted = "\n  - ".join(errors)
         raise ValueError(f"Invalid configuration:\n  - {formatted}")
@@ -225,6 +320,11 @@ def load_config(config_path: str) -> SimulationConfig:
     trust_raw = raw.get("trust", {})
     weights_raw = trust_raw.get("weights", {})
     default_weights = TrustWeightsConfig()
+    attacks_raw = raw.get("attacks", {})
+    label_flipping_raw = attacks_raw.get("label_flipping", {})
+    model_poisoning_raw = attacks_raw.get("model_poisoning", {})
+    byzantine_raw = attacks_raw.get("byzantine", {})
+    sybil_raw = attacks_raw.get("sybil", {})
 
     config = SimulationConfig(
         seed=raw["seed"],
@@ -266,9 +366,64 @@ def load_config(config_path: str) -> SimulationConfig:
             ),
         ),
         aggregation=AggregationConfig(strategy=raw.get("aggregation", {}).get("strategy", "fedavg")),
+        attacks=AttackConfig(
+            enabled=attacks_raw.get("enabled", False),
+            malicious_client_fraction=attacks_raw.get("malicious_client_fraction", 0.20),
+            active_attack=attacks_raw.get("active_attack", "label_flipping"),
+            label_flipping=LabelFlippingConfig(
+                enabled=label_flipping_raw.get("enabled", False),
+                probability=label_flipping_raw.get("probability", 1.0),
+                label_map=label_flipping_raw.get("label_map"),
+            ),
+            model_poisoning=ModelPoisoningConfig(
+                enabled=model_poisoning_raw.get("enabled", False),
+                probability=model_poisoning_raw.get("probability", 1.0),
+                scale_factor=model_poisoning_raw.get("scale_factor", 5.0),
+            ),
+            byzantine=ByzantineConfig(
+                enabled=byzantine_raw.get("enabled", False),
+                probability=byzantine_raw.get("probability", 1.0),
+                strategy=byzantine_raw.get("strategy", "random"),
+            ),
+            sybil=SybilConfig(
+                enabled=sybil_raw.get("enabled", False),
+                number_of_identities=sybil_raw.get("number_of_identities", 3),
+                probability=sybil_raw.get("probability", 1.0),
+            ),
+        ),
     )
     validate_config(config)
     return config
+
+
+def _attack_settings(config: SimulationConfig) -> Dict[str, Dict[str, Any]]:
+    """Flatten `AttackConfig` into the plain-dict shape `assign_attacks` expects.
+
+    Duplicated (deliberately, not imported) in
+    `evaluation/experiment_runner.py`: that module already imports FROM this
+    one for `build_clients`/`resolve_device`, so importing this helper back
+    from there would create a circular import. The mapping is a handful of
+    stable field lookups, low-risk to keep in sync.
+    """
+    attacks = config.attacks
+    return {
+        "label_flipping": {
+            "probability": attacks.label_flipping.probability,
+            "label_map": attacks.label_flipping.label_map,
+        },
+        "model_poisoning": {
+            "probability": attacks.model_poisoning.probability,
+            "scale_factor": attacks.model_poisoning.scale_factor,
+        },
+        "byzantine": {
+            "probability": attacks.byzantine.probability,
+            "strategy": attacks.byzantine.strategy,
+        },
+        "sybil": {
+            "probability": attacks.sybil.probability,
+            "number_of_identities": attacks.sybil.number_of_identities,
+        },
+    }
 
 
 def resolve_device(requested: str) -> torch.device:
@@ -337,6 +492,15 @@ def run_simulation(config: SimulationConfig) -> List[Dict[str, float]]:
     global_model = build_model(config.model.name, in_channels, num_classes)
     clients = build_clients(config, device, global_model)
 
+    if config.attacks.enabled:
+        clients = assign_attacks(
+            clients,
+            malicious_client_fraction=config.attacks.malicious_client_fraction,
+            active_attack=config.attacks.active_attack,
+            attack_settings=_attack_settings(config),
+            seed=config.seed,
+        )
+
     trust_engine: Optional[TrustEngine] = None
     client_selector: Optional[ClientSelector] = None
     if config.trust.enabled:
@@ -353,7 +517,11 @@ def run_simulation(config: SimulationConfig) -> List[Dict[str, float]]:
             reputation_alpha=config.trust.reputation_alpha,
             seed=config.seed,
         )
-        trust_engine.register_clients(clients.keys())
+        # known_identity_ids reuses Phase 2's EXISTING known/unknown identity
+        # distinction (no new trust logic) — non-parent Sybil identities are
+        # simply left unregistered, so IdentityVerifier's existing
+        # unknown_score naturally applies to them.
+        trust_engine.register_clients(known_identity_ids(clients))
 
         # Trust-based selection (Phase 3): replaces random `clients_per_round`
         # sampling. Gated on the same `trust.enabled` flag as `TrustEngine`,
@@ -378,12 +546,32 @@ def run_simulation(config: SimulationConfig) -> List[Dict[str, float]]:
         aggregation_strategy=config.aggregation.strategy,
     )
 
+    attack_type = config.attacks.active_attack if config.attacks.enabled else "none"
     history: List[Dict[str, float]] = []
+    security_records = []
+    attack_history_records = []
     for round_num in range(1, config.federated.num_rounds + 1):
         history.append(server.run_round(round_num))
 
+        if config.attacks.enabled:
+            round_weights = {
+                r.client_id: r.aggregation_weight
+                for r in server.aggregation_weight_records
+                if r.round_num == round_num
+            }
+            security_record, round_history = build_round_security_records(
+                round_num, attack_type, clients, client_selector, server.last_selected_ids, round_weights
+            )
+            security_records.append(security_record)
+            attack_history_records.extend(round_history)
+
     save_history(history, config.logging.results_dir)
     save_plots(history, config.logging.results_dir)
+
+    if config.attacks.enabled:
+        save_security_metrics_csv(security_records, config.logging.results_dir)
+        save_attack_history_csv(attack_history_records, config.logging.results_dir)
+        save_security_plots(security_records, attack_history_records, config.logging.results_dir)
 
     if trust_engine is not None:
         save_trust_scores(trust_engine.records, config.logging.results_dir)
@@ -447,12 +635,32 @@ def parse_args() -> argparse.Namespace:
         help="Run both fedavg and trust_fedavg (same trust-based selection) and plot a global "
         "accuracy comparison, instead of a single run using the config's aggregation.strategy.",
     )
+    parser.add_argument(
+        "--experiment",
+        type=str,
+        choices=["baseline", "fedavg_attack", "ztfedtrust_attack", "compare_all"],
+        default=None,
+        help="Run a Phase 4 fair-comparison experiment mode via ExperimentRunner instead of a "
+        "plain single run. 'compare_all' runs all three and saves the 3-way comparison plots.",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    if args.compare:
+    if args.experiment:
+        # Deferred import: evaluation.experiment_runner imports FROM this
+        # module (build_clients, resolve_device, SimulationConfig), so
+        # importing it back at module top level here would be circular.
+        from evaluation.experiment_runner import ExperimentRunner
+
+        config = load_config(args.config)
+        runner = ExperimentRunner(config)
+        if args.experiment == "compare_all":
+            runner.run_all_and_compare()
+        else:
+            runner.run(args.experiment)
+    elif args.compare:
         run_comparison(args.config)
     else:
         config = load_config(args.config)

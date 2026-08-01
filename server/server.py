@@ -21,6 +21,7 @@ from server.selector import ClientSelector
 from server.trust_fedavg import ClientUpdate, get_aggregation_strategy
 from trust.trust_engine import TrustEngine
 from utils.metrics import evaluate_model
+from utils.validation import validate_state_dict
 
 
 class Server:
@@ -73,10 +74,15 @@ class Server:
         self._aggregation_fn = get_aggregation_strategy(aggregation_strategy)
 
         # Phase 3 per-round logs, mirroring how `trust_engine.records`
-        # accumulates across a run. Only populated when `client_selector`
-        # is set — see `run_round`.
+        # accumulates across a run. `selection_records` (and the console
+        # summary) are only populated when `client_selector` is set, since
+        # they describe threshold-based selection specifically.
+        # `aggregation_weight_records`/`last_selected_ids` are always kept
+        # up to date (Phase 4 needs per-client weights and this round's
+        # participants regardless of which selection mode is active).
         self.selection_records: List[SelectionRecord] = []
         self.aggregation_weight_records: List[AggregationWeightRecord] = []
+        self.last_selected_ids: List[int] = []
 
     def select_clients(self) -> List[int]:
         """Sample a subset of client IDs to participate in the current round.
@@ -108,6 +114,7 @@ class Server:
                 )
         else:
             selected_ids = self.select_clients()
+        self.last_selected_ids = selected_ids
 
         global_state = self.global_model.state_dict()
 
@@ -134,7 +141,23 @@ class Server:
             for r in results
         ]
         aggregated_state, aggregation_weights = self._aggregation_fn(updates)
+        validate_state_dict(aggregated_state, context=f"Round {round_num} aggregation")
         self.global_model.load_state_dict(aggregated_state)
+
+        # Recorded unconditionally (not just when `client_selector` is set):
+        # Phase 4's security metrics need per-client aggregation weights
+        # even for plain-FedAvg-under-attack experiments.
+        num_samples_by_client = {u.client_id: u.num_samples for u in updates}
+        for client_id, weight in aggregation_weights.items():
+            self.aggregation_weight_records.append(
+                AggregationWeightRecord(
+                    round_num=round_num,
+                    client_id=client_id,
+                    trust=trust_at_selection_time[client_id],
+                    dataset_size=num_samples_by_client[client_id],
+                    aggregation_weight=weight,
+                )
+            )
 
         eval_loss, eval_accuracy = evaluate_model(self.global_model, self.test_loader, self.device)
         avg_train_loss = sum(r.average_loss for r in results) / len(results)
@@ -175,19 +198,6 @@ class Server:
                 max_trust=stats.max_trust,
             )
             self.selection_records.append(selection_record)
-
-            num_samples_by_client = {u.client_id: u.num_samples for u in updates}
-            for client_id, weight in aggregation_weights.items():
-                self.aggregation_weight_records.append(
-                    AggregationWeightRecord(
-                        round_num=round_num,
-                        client_id=client_id,
-                        trust=trust_at_selection_time[client_id],
-                        dataset_size=num_samples_by_client[client_id],
-                        aggregation_weight=weight,
-                    )
-                )
-
             print_selection_summary(selection_record, self.aggregation_strategy_name, eval_accuracy)
         elif self.trust_engine is not None:
             # Phase 2 standalone (no Phase 3 selection active): keep its

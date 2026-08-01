@@ -8,4 +8,10 @@ results/*.csv
 results/*.png
 results/trust_plots/
 results/selection_plots/
+results/security_plots/
+results/attacks/
+results/baseline/
+results/fedavg_attack/
+results/ztfedtrust_attack/
+results/validation/
 .pytest_cache/
