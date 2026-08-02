@@ -14,4 +14,9 @@ results/baseline/
 results/fedavg_attack/
 results/ztfedtrust_attack/
 results/validation/
+results/raw/
+results/processed/
+results/figures/
+results/tables/
+results/reports/
 .pytest_cache/

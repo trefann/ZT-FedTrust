@@ -84,6 +84,14 @@ class Server:
         self.aggregation_weight_records: List[AggregationWeightRecord] = []
         self.last_selected_ids: List[int] = []
 
+        # Phase 5: per-round wall-clock time spent in each phase, for
+        # computational-overhead analysis (e.g. Trust Overhead = ZT-FedTrust
+        # runtime - FedAvg runtime). Zero for phases a given configuration
+        # doesn't use (e.g. trust_evaluation_time is always 0.0 when
+        # `trust_engine` is `None`) rather than omitted, so summing them is
+        # always meaningful.
+        self.round_timings: List[Dict[str, float]] = []
+
     def select_clients(self) -> List[int]:
         """Sample a subset of client IDs to participate in the current round.
 
@@ -106,6 +114,7 @@ class Server:
         """
         start_time = time.time()
 
+        selection_start = time.perf_counter()
         if self.client_selector is not None:
             selected_ids = self.client_selector.select(self.clients)
             if not selected_ids:
@@ -115,14 +124,17 @@ class Server:
         else:
             selected_ids = self.select_clients()
         self.last_selected_ids = selected_ids
+        selection_time = time.perf_counter() - selection_start
 
         global_state = self.global_model.state_dict()
 
+        training_start = time.perf_counter()
         results: List[LocalTrainResult] = []
         for client_id in selected_ids:
             client = self.clients[client_id]
             client.set_weights(global_state)
             results.append(client.train())
+        local_training_time = time.perf_counter() - training_start
 
         # Snapshot trust *before* this round's evaluation runs: aggregation
         # must weight by trust as it stood when these clients were selected
@@ -140,9 +152,11 @@ class Server:
             )
             for r in results
         ]
+        aggregation_start = time.perf_counter()
         aggregated_state, aggregation_weights = self._aggregation_fn(updates)
         validate_state_dict(aggregated_state, context=f"Round {round_num} aggregation")
         self.global_model.load_state_dict(aggregated_state)
+        aggregation_time = time.perf_counter() - aggregation_start
 
         # Recorded unconditionally (not just when `client_selector` is set):
         # Phase 4's security metrics need per-client aggregation weights
@@ -173,6 +187,7 @@ class Server:
             round_time,
         )
 
+        trust_evaluation_start = time.perf_counter()
         round_trust_records = None
         if self.trust_engine is not None:
             # Only reads `results` and the pre-training `global_state`
@@ -183,6 +198,17 @@ class Server:
             round_trust_records = self.trust_engine.evaluate_round(
                 round_num, results, self.clients, global_state
             )
+        trust_evaluation_time = time.perf_counter() - trust_evaluation_start
+
+        self.round_timings.append(
+            {
+                "round": round_num,
+                "selection_time": selection_time,
+                "local_training_time": local_training_time,
+                "aggregation_time": aggregation_time,
+                "trust_evaluation_time": trust_evaluation_time,
+            }
+        )
 
         if self.client_selector is not None:
             stats = self.client_selector.policy.calculate_selection_statistics()

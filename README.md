@@ -9,12 +9,16 @@ the resulting global model.
 > and logs a trust score for every client, every round. Phase 3 put those
 > scores to use: clients below a trust threshold are excluded from
 > participating, and aggregation can optionally weight contributions by
-> trust as well as sample count (`TrustFedAvg`). Phase 4 (this version) adds
-> controlled adversarial clients (label flipping, model poisoning,
-> Byzantine, Sybil) and the security metrics to measure whether ZT-FedTrust
-> actually detects and reduces their influence — **without ever letting the
-> server or trust code read the ground-truth malicious label**; see
-> [Phase 4 — Adversarial Evaluation](#phase-4--adversarial-evaluation).
+> trust as well as sample count (`TrustFedAvg`). Phase 4 added controlled
+> adversarial clients (label flipping, model poisoning, Byzantine, Sybil)
+> and the security metrics to measure whether ZT-FedTrust actually detects
+> and reduces their influence — **without ever letting the server or trust
+> code read the ground-truth malicious label**. Phase 5 (this version) turns
+> the simulator into a reproducible research-evaluation framework: a
+> configurable experiment matrix across algorithms/attacks/malicious
+> fractions/seeds, ablation and sensitivity studies, statistical summaries,
+> and automated figures/tables/report generation; see
+> [Phase 5 — Research Benchmarking Framework](#phase-5--research-benchmarking-framework).
 > Switching between plain `FedAvg` and `TrustFedAvg`, random and
 > trust-based selection, or attack on/off, is entirely config-driven; see
 > [Configuration](#configuration).
@@ -44,6 +48,13 @@ the resulting global model.
   recall, F1, attack success rate, malicious aggregation weight) logged to
   CSV and plotted; a fair 3-mode experiment runner (`baseline` /
   `fedavg_attack` / `ztfedtrust_attack`) for apples-to-apples comparison.
+- **Research benchmarking framework (Phase 5):** a configurable experiment
+  matrix (algorithm x attack x malicious fraction x seed), ablation and
+  trust-weight/threshold sensitivity sweeps, statistical summaries (mean,
+  CI, paired significance testing) across repeated seeds, a machine-readable
+  master results schema, publication-style figures/tables, and an automated
+  Markdown research report — all generated from real experiment runs, never
+  fabricated.
 
 ## Project structure
 
@@ -71,10 +82,22 @@ zt-fedtrust/
 │   ├── trust_fedavg.py      # TrustFedAvg + the aggregation strategy pattern (Phase 3)
 │   ├── selector.py          # ClientSelector: trust-threshold + participation-fraction selection (Phase 3)
 │   └── selection_metrics.py # selection/aggregation-weight CSV logging, console summary, plots (Phase 3)
-├── evaluation/                    # attack/security evaluation (Phase 4)
+├── evaluation/                    # attack/security evaluation (Phase 4) + research framework (Phase 5)
 │   ├── attack_metrics.py          # detection confusion-matrix + rate formulas (ground truth read here only)
 │   ├── security_metrics.py        # CSV logging + plots, shared build_round_security_records helper
-│   └── experiment_runner.py       # ExperimentRunner: baseline / fedavg_attack / ztfedtrust_attack
+│   ├── experiment_runner.py       # ExperimentRunner: baseline / fedavg_attack / ztfedtrust_attack
+│   ├── metrics.py                 # core ML/robustness/communication-cost formulas (Phase 5)
+│   ├── statistical_analysis.py    # mean/stdev/CI/paired t-test across repeated seeds (Phase 5)
+│   ├── benchmark.py                # BenchmarkRunner: full matrix + ablation + sensitivity sweeps (Phase 5)
+│   └── report_generator.py         # ReportGenerator: figures, tables, final_report.md (Phase 5)
+├── experiments/                    # Phase 5 experiment configs + CLI
+│   ├── configs/
+│   │   ├── baseline.yaml
+│   │   ├── label_flipping.yaml
+│   │   ├── model_poisoning.yaml
+│   │   ├── byzantine.yaml
+│   │   └── sybil.yaml
+│   └── run_experiments.py          # CLI: --config / --all / --ablation / --sensitivity / --report
 ├── simulation/
 │   └── run.py             # main entry point, config loading + validation, --compare / --experiment modes
 ├── utils/
@@ -92,7 +115,7 @@ zt-fedtrust/
 │   ├── trust_metrics.py    # TrustRecord, CSV logging, plots, round summary (Phase 2)
 │   └── trust_policy.py     # TrustPolicy: fixed/adaptive threshold + eligibility (Phase 3)
 ├── tests/                  # pytest unit + integration tests (synthetic data, offline)
-├── results/                 # logs, history/trust/selection/security CSVs, plots (generated)
+├── results/                 # logs, CSVs, plots (generated); Phase 5 adds raw/processed/figures/tables/reports
 ├── requirements.txt
 ├── requirements-dev.txt     # adds pytest, for running the test suite
 └── README.md
@@ -433,6 +456,140 @@ confirms the same effect with more rounds/lower malicious fraction. Run the
 `--experiment compare_all` command above with more rounds (or the 20-client
 scale) to see full rejection play out.
 
+## Phase 5 — Research Benchmarking Framework
+
+**Research question:** does ZT-FedTrust improve the robustness of federated
+learning against malicious IoT clients while maintaining acceptable model
+performance and communication efficiency? Phase 5 turns Phases 1-4 into a
+reproducible framework for answering that question with actual experimental
+evidence — not by adding new FL/trust logic (none exists here), purely by
+orchestrating what already exists across a matrix of conditions and
+generating statistically-grounded, honestly-reported output.
+
+**No Phase 1-4 code changes were needed for the orchestration itself.** The
+four algorithm/attack conditions map directly onto Phase 4's existing
+`ExperimentRunner` modes:
+
+| Condition | Mode called | trust.enabled | attacks.enabled |
+|---|---|---|---|
+| A. FedAvg, no attack | `baseline` | — | — |
+| B. FedAvg, under attack | `fedavg_attack` | — | `true` |
+| C. ZT-FedTrust, no attack | `ztfedtrust_attack` | `true` | `false` |
+| D. ZT-FedTrust, under attack | `ztfedtrust_attack` | `true` | `true` |
+
+`evaluation/benchmark.py::build_simulation_config` builds the right
+`SimulationConfig` for each cell; `evaluation/benchmark.py::BenchmarkRunner`
+loops it over every (algorithm, attack, malicious fraction, seed)
+combination. The one genuine source change Phase 5 needed was additive
+per-phase timing instrumentation in `Server` (`round_timings`: selection /
+local training / aggregation / trust evaluation time per round) for the
+computational-overhead metrics — everything else reuses Phase 2-4 data
+Phase 4's `ExperimentRunner` already computes (`security_records`,
+`attack_history_records`).
+
+### Running experiments
+
+```bash
+# One attack scenario (config files under experiments/configs/):
+python experiments/run_experiments.py --config experiments/configs/label_flipping.yaml
+
+# The full matrix (all 5 config files merged: none + all 4 attacks x 10/20/30%):
+python experiments/run_experiments.py --all
+
+# Trust-component ablation (full ZT-FedTrust vs each dimension disabled):
+python experiments/run_experiments.py --ablation
+
+# Trust-threshold sensitivity (0.40 - 0.80):
+python experiments/run_experiments.py --sensitivity
+
+# Regenerate figures/tables/report from existing results, without rerunning anything:
+python experiments/run_experiments.py --report
+```
+
+`--num-clients`, `--rounds`, and `--seeds` override any config's experiment
+settings from the command line, for fast validation runs without editing
+the committed configs (sized to the spec's suggested defaults: 20 clients,
+30 rounds, 5 seeds — a full run at that scale takes hours on CPU-only
+hardware; see [Validation results](#validation-results-phase-5) below for
+what an actually-executed reduced-scale run looks like).
+
+### Master results schema
+
+Every round of every experiment becomes one row in `results/raw/master_results.csv`,
+via `evaluation/benchmark.py::MasterRecord`. Beyond the spec's required 23
+columns (`ExperimentID` through `AggregationTime`), four more are appended
+(not interleaved, so the first 23 columns' order is unaffected) because the
+spec asks for these values elsewhere (sections 9, 13, 14) but its section-20
+schema has no column for them: `SelectionTime`, `LocalTrainingTime`,
+`AttackSuccessRate`, `FalsePositiveRate`.
+
+Each experiment's full result (or failure) is also saved standalone as
+`results/raw/<experiment_id>.json`, with its seed, config, algorithm, attack
+configuration, timestamp, and git commit hash (`None` if git is unavailable)
+— reproducible from that file alone.
+
+**Failures are never silently dropped.** A raising experiment cell is
+caught, recorded with `status="FAILED"` and its error message in both the
+raw JSON and `results/raw/failed_experiments.csv`, and the sweep continues
+— see `tests/test_benchmark.py::test_failed_experiment_is_recorded_not_raised`.
+
+### Ablation and sensitivity — pure config sweeps, zero new trust logic
+
+Both reuse `build_simulation_config`'s `weight_overrides`/`threshold_override`
+parameters:
+
+- **Ablation** (`BenchmarkRunner.run_ablation`): "disabling" a trust
+  dimension means setting its configured weight to `0.0`.
+  `TrustEngine._compose_trust` (Phase 2, untouched) already divides by the
+  *sum* of configured weights, so this correctly removes that dimension's
+  influence on the composite score, selection, and aggregation — the
+  dimension's own computation still runs internally (e.g. reputation still
+  updates), it just can no longer affect anything downstream.
+- **Threshold sensitivity** (`BenchmarkRunner.run_threshold_sensitivity`):
+  sweeps `trust.threshold` across `[0.40, 0.50, 0.60, 0.70, 0.80]` (configurable),
+  measuring the security/availability trade-off directly from
+  `TrustPolicy` (Phase 3, untouched).
+- **Weight sensitivity** (`BenchmarkRunner.run_weight_sensitivity`): compares
+  named weight configurations you supply, same mechanism.
+
+### Statistical analysis
+
+`evaluation/statistical_analysis.py::summarize` computes mean/stdev/median/
+min/max/95% CI (t-distribution) across a metric's values from repeated
+seeds. `paired_significance_test` runs a paired t-test (`scipy.stats.ttest_rel`)
+between two seed-matched samples (e.g. FedAvg vs ZT-FedTrust final accuracy,
+same seeds) — and **returns `None` rather than a p-value** when fewer than
+`MIN_PAIRED_SAMPLES` (3) pairs are available, per the requirement not to
+report significance without enough repeated runs.
+
+### Figures, tables, and the report (`evaluation/report_generator.py`)
+
+`ReportGenerator` reads exclusively from saved CSVs (never live objects),
+so `--report` can regenerate everything from a previous run without
+rerunning experiments; missing CSVs (e.g. no ablation sweep run) mean the
+corresponding output is skipped, not fabricated.
+
+- **10 figures** → `results/figures/`: accuracy/loss vs round (FedAvg /
+  FedAvg+attack / ZT-FedTrust+attack), trust evolution, detection rate,
+  malicious aggregation influence, accuracy vs attack strength, ablation,
+  threshold sensitivity, communication overhead, computational overhead
+  breakdown.
+- **5 tables** (CSV + Markdown) → `results/tables/`: overall performance,
+  security performance, malicious influence, overhead, ablation.
+- **Processed summaries** → `results/processed/`: `summary.csv`,
+  `security_summary.csv`, `ablation_summary.csv`, `sensitivity_summary.csv`.
+- **`results/reports/final_report.md`**: experimental setup, results
+  (accuracy/robustness/detection/influence/overhead), ablation, sensitivity,
+  and key findings — `_report_key_findings` only ever states what the
+  loaded numbers actually show (e.g. "ZT-FedTrust reduced mean malicious
+  aggregation weight from X to Y in this result set"), and explicitly flags
+  the opposite if the data doesn't support the expected direction, rather
+  than asserting an unsupported "ZT-FedTrust is superior" claim.
+
+### Validation results (Phase 5)
+
+<!-- PHASE5_VALIDATION_RESULTS -->
+
 ## Client API
 
 Each `Client` owns a persistent local model and exposes:
@@ -488,9 +645,27 @@ covers:
   and config-to-attack-settings mapping (offline; the full 3-mode pipeline
   against real data is exercised by the Phase 4 validation runs below,
   consistent with how Phase 1's `run_simulation` itself was verified)
+- Evaluation metrics (`tests/test_evaluation_metrics.py`): convergence-round
+  definition (incl. the stability-window requirement, not just "first round
+  above threshold"), robustness formulas, communication-cost estimation
+  against actual model parameter counts
+- Statistical analysis (`tests/test_statistical_analysis.py`): summary
+  statistics against hand-computed values, and that the paired
+  significance test refuses to compute below the minimum sample count
+  rather than fabricating a p-value
+- Benchmark (`tests/test_benchmark.py`): all four algorithm/attack
+  conditions map onto the correct `ExperimentRunner` mode + config flags,
+  ablation/threshold overrides touch only the intended field, the master
+  schema row length matches its header, and a failing experiment cell is
+  recorded (not raised, not dropped) while the sweep continues
+- Report generator (`tests/test_report_generator.py`): figures/tables/
+  report generation from a hand-crafted synthetic CSV (no live run needed,
+  matching how `ReportGenerator` itself only ever reads from saved CSVs),
+  including that a "reduced influence" claim in the report only appears
+  when the underlying numbers actually show it
 
-The full 120-test suite (36 Phase 1 + 21 Phase 2 + 22 Phase 3 + 41 Phase 4)
-runs offline in well under a minute.
+The full 160-test suite (36 Phase 1 + 21 Phase 2 + 22 Phase 3 + 41 Phase 4 +
+40 Phase 5) runs offline in under a minute.
 
 ## Extensibility
 
@@ -516,9 +691,20 @@ runs offline in well under a minute.
   `apply_to_update` in `attacks/`, then reference it from
   `clients/malicious_client.py::build_attack` — no changes to `Server`,
   `TrustEngine`, or any other Phase 1-3 code.
-- **Attack detection / adversarial-robustness improvements** (Phase 5+):
+- **Attack detection / adversarial-robustness improvements** (future work):
   the evaluation harness (`evaluation/attack_metrics.py`,
-  `security_metrics.csv`, `attack_history.csv`) already exists to measure
-  any change here — e.g. a smarter update-quality signal, a different
-  reputation smoothing curve, or the `sybil_group_id`-aware identity check
-  extended beyond just excluding non-parent duplicates.
+  `security_metrics.csv`, `attack_history.csv`, and now the Phase 5 master
+  schema + statistical analysis) already exists to measure any change here
+  — e.g. a smarter update-quality signal, a different reputation smoothing
+  curve, or the `sybil_group_id`-aware identity check extended beyond just
+  excluding non-parent duplicates. Any such change can be A/B tested through
+  `BenchmarkRunner` immediately, with statistical significance, for free.
+- **New Phase 5 sweeps**: `BenchmarkRunner._run_single` is the one place
+  that builds a config and runs an experiment cell; a new sweep dimension
+  is a new loop calling it with different overrides (see
+  `run_ablation`/`run_threshold_sensitivity`/`run_weight_sensitivity` for
+  the pattern) — no changes needed to `ExperimentRunner` or any Phase 1-4 code.
+- **New figures/tables**: `ReportGenerator` reads only from
+  `results/raw/*.csv`; a new figure/table is a new method reading the same
+  `master_df`/`ablation_df`/`sensitivity_df` — it works retroactively on
+  any past run's saved results via `--report`, no rerun required.

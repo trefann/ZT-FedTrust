@@ -1,0 +1,54 @@
+# Label-flipping attack across 10/20/30% malicious clients, both algorithms.
+# Shares the identical `experiment`/`seeds` block with baseline.yaml — the
+# only intentional difference is the attack condition being evaluated.
+
+experiment:
+  num_clients: 20
+  rounds: 30
+  local_epochs: 2
+  batch_size: 32
+  learning_rate: 0.01
+  momentum: 0.9
+  participation_fraction: 0.5
+  dataset: mnist
+  data_dir: ./data_cache
+  partition_type: iid
+  dirichlet_alpha: 0.5
+  model_name: cnn
+  device: cpu
+  threshold_mode: fixed
+  threshold: 0.60
+  initial_reputation: 0.80
+  reputation_alpha: 0.80
+  aggregation_strategy: trust_fedavg
+  trust_weights:
+    identity: 0.25
+    integrity: 0.20
+    behaviour: 0.20
+    reputation: 0.15
+    update_quality: 0.20
+  bytes_per_param: 4
+
+seeds:
+  - 42
+  - 123
+  - 456
+  - 789
+  - 2026
+
+algorithms:
+  - fedavg
+  - ztfedtrust
+
+attacks:
+  - none
+  - label_flipping
+
+malicious_fractions:
+  - 0.10
+  - 0.20
+  - 0.30
+
+results_dir: results
+convergence_target_fraction: 0.95
+convergence_stability_rounds: 3
