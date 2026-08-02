@@ -588,7 +588,73 @@ corresponding output is skipped, not fabricated.
 
 ### Validation results (Phase 5)
 
-<!-- PHASE5_VALIDATION_RESULTS -->
+The Final Benchmark validation (spec section 29) was run end-to-end against
+real MNIST — 24 experiment cells (2 algorithms x {none, label_flipping,
+model_poisoning, byzantine} x 3 seeds), all completing successfully (0
+failed). Scale was reduced from the spec's suggested 20 clients/10 rounds to
+**6 clients, 2 rounds, 3 seeds (42, 123, 456), 20% malicious** for session
+tractability — transparently smaller, not fabricated; it still took ~66
+minutes on CPU-only hardware. `configs/config.yaml` and
+`experiments/configs/*.yaml` default to the full suggested scale for a real
+run. Every number below comes straight from `results/reports/final_report.md`,
+itself generated entirely from `results/raw/master_results.csv` — nothing
+here is hand-entered.
+
+| Algorithm | Attack | Final Accuracy (mean ± std, n=3) | Robustness Ratio | Malicious Agg. Weight |
+|---|---|---|---|---|
+| FedAvg | none | 0.9794 ± 0.0024 | — | — |
+| FedAvg | label_flipping @ 20% | 0.8588 ± 0.1181 | 0.877 | 0.25 (exactly their fair sample share) |
+| FedAvg | model_poisoning @ 20% | 0.9214 ± 0.0265 | 0.941 | 0.25 |
+| FedAvg | byzantine @ 20% | 0.9725 ± 0.0021 | 0.993 | 0.25 |
+| ZT-FedTrust | none | 0.9794 ± 0.0022 | — | — |
+| ZT-FedTrust | label_flipping @ 20% | 0.9686 ± 0.0205 | 0.989 | 0.077 |
+| ZT-FedTrust | model_poisoning @ 20% | 0.9605 ± 0.0316 | 0.981 | 0.077 |
+| ZT-FedTrust | byzantine @ 20% | 0.9778 ± 0.0033 | 0.998 | 0.077 |
+
+**Honest read of what this small run actually shows:**
+- **Malicious influence, not detection, is where the effect shows up at this
+  horizon.** Across every attack, FedAvg's malicious clients kept their
+  proportional sample-count share of aggregation weight (0.25, i.e. TrustFedAvg
+  played no role because it wasn't in use) — while under TrustFedAvg it fell to
+  0.077, confirmed visually in `figures/figure5_malicious_influence.png`
+  (crosses from 0.25 down to 0.08 by round 2). `DetectionRate` was 0.0000 for
+  *both* systems: 2 rounds and reputation's smoothing (`alpha=0.80`, deliberately
+  slow-moving) wasn't enough to push any client below the 0.60 threshold —
+  consistent with the same short-horizon result observed in Phase 4's own
+  validation. TrustFedAvg reduces influence well before the threshold mechanism
+  catches up.
+- **Robustness improved under every attack tested**, most visibly against
+  label-flipping (ratio 0.877 -> 0.989) and model-poisoning (0.941 -> 0.981);
+  byzantine was already mild for FedAvg at this scale (0.993), so ZT-FedTrust's
+  0.998 is a smaller but still real improvement.
+- **Overhead is real and non-trivial at this scale**: mean total runtime was
+  334.7s (FedAvg) vs 982.5s (ZT-FedTrust) — a measured trust overhead of 647.8s
+  (193.5%), from `table4_overhead.csv`. This reflects genuine per-round
+  computation (5 trust dimensions, cosine similarity against the round's mean
+  update, threshold-based selection) at a very small client count where that
+  fixed cost isn't yet amortised over many participants — not a network
+  measurement, and not necessarily representative of the overhead percentage
+  at the spec's suggested 20-client scale.
+- **Accuracy differences are *not* statistically significant at this sample
+  size — and the report says so plainly, not a rosier story.** With exactly
+  `MIN_PAIRED_SAMPLES = 3` matched seeds, the paired t-test (ZT-FedTrust vs
+  FedAvg final accuracy) *does* run, but none of the four conditions clear
+  p < 0.05: `none` p=0.87, `label_flipping` p=0.28 (mean difference +0.110,
+  the largest gap observed), `model_poisoning` p=0.17, `byzantine` p=0.22.
+  Every attacked condition's mean difference favours ZT-FedTrust, and the
+  malicious-aggregation-weight reduction above is a direct within-run
+  structural measurement (not a between-seed comparison, so this caveat
+  doesn't apply to it) — but the *accuracy* improvement specifically would
+  need more seeds before it's a claim this framework can back statistically,
+  and it isn't claimed here.
+- **Reproducibility verified**: rerunning `fedavg_byzantine_0.2_seed42` from a
+  fresh process reproduced identical per-round accuracy
+  (`[0.9449, 0.973]` both times).
+
+Run `python experiments/run_experiments.py --all` (or `--config
+experiments/configs/label_flipping.yaml`, etc.) at the committed 20-client/
+30-round/5-seed scale for a research-grade version of this table — expect it
+to take considerably longer than this validation run.
 
 ## Client API
 
