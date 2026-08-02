@@ -3,20 +3,9 @@ __pycache__/
 .venv/
 venv/
 data_cache/
-results/logs/
-results/*.csv
-results/*.png
-results/trust_plots/
-results/selection_plots/
-results/security_plots/
-results/attacks/
-results/baseline/
-results/fedavg_attack/
-results/ztfedtrust_attack/
-results/validation/
-results/raw/
-results/processed/
-results/figures/
-results/tables/
-results/reports/
+# Every experiment/demo run writes its own subdirectory under results/ (the
+# name varies per run) — ignore everything generated, keep only the
+# placeholder that reserves the directory in git.
+results/*
+!results/.gitkeep
 .pytest_cache/

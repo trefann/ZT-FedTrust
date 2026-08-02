@@ -1,0 +1,71 @@
+# Larger live-demo config (~7-9 minutes): a full 3-way comparison
+# (FedAvg no-attack baseline / FedAvg under attack / ZT-FedTrust under
+# attack) with the 3-way accuracy + loss comparison plots. Use this if the
+# panel wants to see the vulnerability-vs-defense story, not just one run.
+#
+# Usage:
+#   python simulation/run.py --config configs/demo/larger.yaml --experiment compare_all
+
+seed: 42
+device: "cpu"
+
+data:
+  dataset: "mnist"
+  data_dir: "./data_cache"
+  num_clients: 10
+  batch_size: 32
+  partition:
+    type: "iid"
+    alpha: 0.5
+
+model:
+  name: "cnn"
+
+federated:
+  num_rounds: 3
+  clients_per_round: 5
+  local_epochs: 1
+  learning_rate: 0.01
+  momentum: 0.9
+
+logging:
+  log_dir: "./results/demo_larger/logs"
+  log_level: "WARNING"
+  results_dir: "./results/demo_larger"
+
+trust:
+  enabled: true
+  initial_reputation: 0.80
+  reputation_alpha: 0.80
+  threshold_mode: fixed
+  threshold: 0.60
+  participation_fraction: 0.50
+  weights:
+    identity: 0.25
+    integrity: 0.20
+    behaviour: 0.20
+    reputation: 0.15
+    update_quality: 0.20
+
+aggregation:
+  strategy: trust_fedavg
+
+attacks:
+  enabled: true
+  malicious_client_fraction: 0.20
+  active_attack: label_flipping
+  label_flipping:
+    enabled: true
+    probability: 1.0
+  model_poisoning:
+    enabled: false
+    probability: 1.0
+    scale_factor: 5.0
+  byzantine:
+    enabled: false
+    probability: 1.0
+    strategy: random
+  sybil:
+    enabled: false
+    number_of_identities: 3
+    probability: 1.0

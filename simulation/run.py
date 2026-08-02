@@ -646,6 +646,22 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _save_single_experiment_result(result: Any, results_dir: str) -> None:
+    """Save one `ExperimentRunner.run(mode)` result's outputs to disk.
+
+    `run_all_and_compare()` already saves each mode's outputs internally;
+    this covers the single-mode path (`--experiment <mode>`, not
+    `compare_all`), which otherwise only returned an in-memory
+    `ExperimentResult` with nothing persisted to inspect afterward.
+    """
+    save_history(result.history, results_dir)
+    save_plots(result.history, results_dir)
+    if result.security_records:
+        save_security_metrics_csv(result.security_records, results_dir)
+        save_attack_history_csv(result.attack_history_records, results_dir)
+        save_security_plots(result.security_records, result.attack_history_records, results_dir)
+
+
 def main() -> None:
     args = parse_args()
     if args.experiment:
@@ -659,7 +675,9 @@ def main() -> None:
         if args.experiment == "compare_all":
             runner.run_all_and_compare()
         else:
-            runner.run(args.experiment)
+            result = runner.run(args.experiment)
+            _save_single_experiment_result(result, config.logging.results_dir)
+            print(f"Results saved to {config.logging.results_dir}")
     elif args.compare:
         run_comparison(args.config)
     else:
