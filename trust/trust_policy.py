@@ -86,25 +86,43 @@ class TrustPolicy:
         self._strategy = _THRESHOLD_STRATEGIES[threshold_mode]
         self._last_threshold: float = threshold
         self._last_clients: List[Client] = []
+        # Trust scores as they stood *at selection time*, keyed by client_id.
+        # `Client`/`MaliciousClient` objects are mutated in place later in
+        # the same round (`TrustEngine.evaluate_round` overwrites
+        # `trust_score` for whichever clients just trained) — reading
+        # `client.trust_score` live after that point would silently compare
+        # this round's fresh scores for some clients against last round's
+        # scores for others, all against a threshold computed before either.
+        # Freezing a snapshot here is what makes `is_trusted`/
+        # `calculate_selection_statistics` safe to call at any point later
+        # in the round, not just immediately after `get_trusted_clients`.
+        self._last_scores: Dict[int, float] = {}
 
     def is_trusted(self, client: Client) -> bool:
-        """Return whether `client` meets the most recently computed threshold."""
-        return client.trust_score >= self._last_threshold
+        """Return whether `client` met the most recently computed threshold.
+
+        Uses the trust score snapshotted at that evaluation, not whatever
+        `client.trust_score` holds *now* — see `_last_scores`.
+        """
+        score = self._last_scores.get(client.client_id, client.trust_score)
+        return score >= self._last_threshold
 
     def get_trusted_clients(self, clients: List[Client]) -> List[Client]:
         """Compute this round's threshold from `clients`, then return the eligible subset.
 
         Subsequent calls to `is_trusted` and `calculate_selection_statistics`
-        report against this same evaluation, until the next call.
+        report against this same evaluation, until the next call — safe even
+        after `clients`' own `trust_score` attributes change later in the round.
         """
         self._last_threshold = self._strategy(clients, self.configured_threshold)
         self._last_clients = list(clients)
+        self._last_scores = {client.client_id: client.trust_score for client in clients}
         return [client for client in self._last_clients if self.is_trusted(client)]
 
     def calculate_selection_statistics(self) -> SelectionStatistics:
         """Summarise the most recent `get_trusted_clients` evaluation."""
         clients = self._last_clients
-        scores = [client.trust_score for client in clients]
+        scores = [self._last_scores[client.client_id] for client in clients]
         eligible = [client for client in clients if self.is_trusted(client)]
         return SelectionStatistics(
             total_clients=len(clients),

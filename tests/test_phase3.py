@@ -105,6 +105,34 @@ def test_trust_policy_rejects_unknown_threshold_mode():
         TrustPolicy(threshold_mode="not-a-real-mode")
 
 
+def test_eligibility_survives_trust_score_mutation_after_selection():
+    """Regression test: `Server.run_round` calls `TrustEngine.evaluate_round`
+    (which mutates `client.trust_score` in place) *after* selection but
+    *before* `calculate_selection_statistics()` is read for the console
+    summary / CSV row. If TrustPolicy read trust scores live instead of a
+    frozen snapshot, eligibility/average-trust would silently reflect a mix
+    of this round's fresh scores (for clients that just trained) and stale
+    scores (for clients that didn't) — evaluated against a threshold that
+    was itself computed before any of that mutation happened.
+    """
+    policy = TrustPolicy(threshold_mode="adaptive", threshold=0.60)
+    clients = [_client_with_trust(i, 1.0) for i in range(10)]  # all tied -> threshold == 1.0
+    eligible = policy.get_trusted_clients(clients)
+    assert len(eligible) == 10  # everyone exactly meets an exactly-1.0 threshold
+
+    stats_before_mutation = policy.calculate_selection_statistics()
+
+    # Simulate TrustEngine overwriting trust_score for a subset of clients
+    # (as if they'd just trained and been freshly scored) after selection.
+    for client in clients[:7]:
+        client.trust_score = 0.85
+
+    stats_after_mutation = policy.calculate_selection_statistics()
+    assert stats_after_mutation.eligible_clients == stats_before_mutation.eligible_clients == 10
+    assert stats_after_mutation.average_trust == stats_before_mutation.average_trust == 1.0
+    assert all(policy.is_trusted(client) for client in clients)
+
+
 # --------------------------------------------------------------------------
 # ClientSelector
 # --------------------------------------------------------------------------

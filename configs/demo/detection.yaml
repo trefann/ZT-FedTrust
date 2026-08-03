@@ -1,0 +1,84 @@
+# Detection demo: designed to actually show ZT-FedTrust rejecting malicious
+# clients, not just scoring them lower. Two things differ from the other
+# demo configs, both load-bearing:
+#
+#   1. threshold_mode: adaptive, not fixed. With the default trust weights,
+#      identity/integrity/behaviour aren't attack-sensitive (they stay near
+#      1.0 regardless of the attack), so a fixed 0.60 threshold sits below
+#      the reachable range of a malicious client's composite trust no
+#      matter how many rounds run. An adaptive threshold (mean - 0.5*stdev
+#      of the CURRENT round's trust distribution) responds to the actual
+#      gap between benign and malicious scores instead of a static number.
+#   2. active_attack: byzantine (strategy "negate"). Label-flipping is
+#      subtle at the update-vector level and is genuinely hard for the
+#      update-quality signal to catch (see the Phase 4 validation results
+#      in the README) — Byzantine's negated update is unambiguous
+#      (cosine similarity to the round's mean is strongly negative), so
+#      it's the attack most likely to demonstrate detection working.
+#
+# Usage:
+#   python simulation/run.py --config configs/demo/detection.yaml --experiment compare_all
+
+seed: 42
+device: "cpu"
+
+data:
+  dataset: "mnist"
+  data_dir: "./data_cache"
+  num_clients: 10
+  batch_size: 32
+  partition:
+    type: "iid"
+    alpha: 0.5
+
+model:
+  name: "cnn"
+
+federated:
+  num_rounds: 6
+  clients_per_round: 7
+  local_epochs: 1
+  learning_rate: 0.01
+  momentum: 0.9
+
+logging:
+  log_dir: "./results/demo_detection/logs"
+  log_level: "INFO"
+  results_dir: "./results/demo_detection"
+
+trust:
+  enabled: true
+  initial_reputation: 0.80
+  reputation_alpha: 0.80
+  threshold_mode: adaptive
+  threshold: 0.60
+  participation_fraction: 0.70
+  weights:
+    identity: 0.25
+    integrity: 0.20
+    behaviour: 0.20
+    reputation: 0.15
+    update_quality: 0.20
+
+aggregation:
+  strategy: trust_fedavg
+
+attacks:
+  enabled: true
+  malicious_client_fraction: 0.20
+  active_attack: byzantine
+  label_flipping:
+    enabled: false
+    probability: 1.0
+  model_poisoning:
+    enabled: false
+    probability: 1.0
+    scale_factor: 5.0
+  byzantine:
+    enabled: true
+    probability: 1.0
+    strategy: negate
+  sybil:
+    enabled: false
+    number_of_identities: 3
+    probability: 1.0
