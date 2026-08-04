@@ -1,10 +1,12 @@
 """Tests for the shared IoT experiment builders and, in later tasks, per-dataset loaders."""
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
 
-from data.iot_datasets import _build_natural_client_experiment, _build_partitioned_experiment
+from data.iot_datasets import _build_natural_client_experiment, _build_partitioned_experiment, load_ciciot2023
 
 
 def _make_partitioned_df(num_rows=200, seed=0):
@@ -134,3 +136,40 @@ class TestBuildNaturalClientExperiment:
         )
         for dataset in result.train_client_datasets.values():
             assert len(dataset) <= 10
+
+
+class TestLoadCiciot2023:
+    def _write_fixture(self, tmp_path: Path) -> Path:
+        content = (
+            "flow_duration,Header_Length,Protocol Type,Rate,label\n"
+            "0,54,6,17.3,DDoS-TCP_Flood\n"
+            "0,53,5,0.3,DDoS-TCP_Flood\n"
+            "1,60,17,5.0,DDoS-UDP_Flood\n"
+            "2,70,1,9.0,DDoS-ICMP_Flood\n"
+            "0,54,6,3.9,DDoS-TCP_Flood\n"
+            "1,61,17,4.4,DDoS-UDP_Flood\n"
+            "2,71,1,8.8,DDoS-ICMP_Flood\n"
+            "0,55,6,2.1,DDoS-TCP_Flood\n"
+        )
+        data_dir = tmp_path / "ZT-Fedtrust Datasets"
+        data_dir.mkdir()
+        (data_dir / "CICIoT2023 (2).csv").write_text(content, encoding="utf-8")
+        return data_dir
+
+    def test_loads_and_produces_expected_shape(self, tmp_path):
+        data_dir = self._write_fixture(tmp_path)
+        result = load_ciciot2023(
+            str(data_dir), num_clients=2, partition_type="iid",
+            dirichlet_alpha=0.5, max_rows=None, seed=1,
+        )
+        assert result.input_dim == 4  # flow_duration, Header_Length, Protocol Type, Rate
+        assert result.num_classes == 3
+        assert len(result.train_client_datasets) == 2
+
+    def test_no_benign_traffic_means_no_attack_pool(self, tmp_path):
+        data_dir = self._write_fixture(tmp_path)
+        result = load_ciciot2023(
+            str(data_dir), num_clients=2, partition_type="iid",
+            dirichlet_alpha=0.5, max_rows=None, seed=1,
+        )
+        assert result.attack_pool is None

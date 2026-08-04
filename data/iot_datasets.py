@@ -20,6 +20,7 @@ different feature counts) and return one `IoTExperimentData` bundle.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import pandas as pd
@@ -174,4 +175,35 @@ def _build_natural_client_experiment(
         input_dim=encoder.input_dim,
         num_classes=len(class_names),
         class_names=class_names,
+    )
+
+
+_CICIOT2023_FILENAME = "CICIoT2023 (2).csv"
+
+
+def _load_ciciot2023_dataframe(data_dir: str) -> pd.DataFrame:
+    path = Path(data_dir) / _CICIOT2023_FILENAME
+    return pd.read_csv(path, encoding="utf-8-sig")
+
+
+def load_ciciot2023(
+    data_dir: str,
+    num_clients: int,
+    partition_type: str,
+    dirichlet_alpha: float,
+    max_rows: Optional[int],
+    seed: int,
+) -> IoTExperimentData:
+    """No benign traffic exists in this CICIoT2023 slice, so `benign_label`
+    is None — `_build_attack_pool` correctly returns no attack pool."""
+    df = _load_ciciot2023_dataframe(data_dir)
+    return _build_partitioned_experiment(
+        df,
+        label_column="label",
+        benign_label=None,
+        num_clients=num_clients,
+        partition_type=partition_type,
+        dirichlet_alpha=dirichlet_alpha,
+        max_rows=max_rows,
+        seed=seed,
     )
