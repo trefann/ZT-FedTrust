@@ -1,6 +1,5 @@
 """Tests for the shared IoT experiment builders and, in later tasks, per-dataset loaders."""
 
-import io
 import zipfile
 from pathlib import Path
 
