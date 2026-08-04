@@ -36,6 +36,7 @@ from data.iot_preprocessing import (
     subsample_dataframe,
 )
 from data.partition import make_client_subsets, partition_dirichlet, partition_iid
+from data.rar_extract import extract_rar
 from data.tabular_dataset import TabularDataset
 
 _TEST_FRACTION = 0.2
@@ -335,6 +336,85 @@ def load_ton_iot_devices(
         device_dataframes,
         label_column="type",
         benign_label="normal",
+        max_rows_per_device=max_rows_per_device,
+        seed=seed,
+    )
+
+
+_NBAIOT_ZIP_FILENAME = "detection+of+iot+botnet+attacks+n+baiot.zip"
+_NBAIOT_CACHE_DIR = "data_cache/iot/nbaiot"
+_NBAIOT_DEVICE_DIRS = (
+    "Danmini_Doorbell", "Ecobee_Thermostat", "Ennio_Doorbell",
+    "Philips_B120N10_Baby_Monitor", "Provision_PT_737E_Security_Camera",
+    "Provision_PT_838_Security_Camera", "Samsung_SNH_1011_N_Webcam",
+    "SimpleHome_XCS7_1002_WHT_Security_Camera", "SimpleHome_XCS7_1003_WHT_Security_Camera",
+)
+
+
+def _read_family_attack_csvs(extracted_dir: Path, family: str) -> pd.DataFrame:
+    """Read every CSV an extracted attack archive contains, labeling each
+    row by its source filename (e.g. `combo.csv` -> "gafgyt_combo")."""
+    frames = []
+    for csv_path in sorted(extracted_dir.glob("*.csv")):
+        part = pd.read_csv(csv_path, encoding="utf-8-sig")
+        part["label"] = f"{family}_{csv_path.stem}"
+        frames.append(part)
+    return pd.concat(frames, ignore_index=True)
+
+
+def _load_nbaiot_device_dataframe(zip_path: Path, device_name: str, cache_dir: Path) -> pd.DataFrame:
+    frames = []
+    with zipfile.ZipFile(zip_path) as zf:
+        entries = set(zf.namelist())
+        benign_entry = f"{device_name}/benign_traffic.csv"
+        with zf.open(benign_entry) as f:
+            benign_df = pd.read_csv(f, encoding="utf-8-sig")
+        benign_df["label"] = "benign"
+        frames.append(benign_df)
+
+        for family in ("gafgyt", "mirai"):
+            rar_entry = f"{device_name}/{family}_attacks.rar"
+            if rar_entry not in entries:
+                continue
+            extracted_dir = cache_dir / device_name / family
+            if not any(extracted_dir.glob("*.csv")):
+                archive_path = cache_dir / device_name / f"{family}_attacks.rar"
+                archive_path.parent.mkdir(parents=True, exist_ok=True)
+                with zf.open(rar_entry) as src, open(archive_path, "wb") as dst:
+                    dst.write(src.read())
+                extract_rar(archive_path, extracted_dir)
+            frames.append(_read_family_attack_csvs(extracted_dir, family))
+
+    return pd.concat(frames, ignore_index=True)
+
+
+def _load_nbaiot_device_dataframes(data_dir: str) -> Dict[str, pd.DataFrame]:
+    zip_path = Path(data_dir) / _NBAIOT_ZIP_FILENAME
+    cache_dir = Path(_NBAIOT_CACHE_DIR)
+    with zipfile.ZipFile(zip_path) as zf:
+        present_devices = {
+            name for name in _NBAIOT_DEVICE_DIRS if f"{name}/benign_traffic.csv" in zf.namelist()
+        }
+    return {
+        name: _load_nbaiot_device_dataframe(zip_path, name, cache_dir) for name in present_devices
+    }
+
+
+def load_nbaiot(data_dir: str, max_rows_per_device: Optional[int], seed: int) -> IoTExperimentData:
+    """Each of N-BaIoT's 9 real devices becomes one client. Every device
+    ships `benign_traffic.csv` and a `gafgyt_attacks.rar`, but only 7 of the
+    9 also ship a `mirai_attacks.rar` (Ennio_Doorbell and
+    Samsung_SNH_1011_N_Webcam have no Mirai traffic in the real dataset) —
+    that per-family absence is a documented characteristic of N-BaIoT, not a
+    corrupted/incomplete download, so it's skipped rather than raised. A
+    missing `benign_traffic.csv`, by contrast, would indicate a genuinely
+    broken archive and is read unconditionally so it fails loudly instead.
+    """
+    device_dataframes = _load_nbaiot_device_dataframes(data_dir)
+    return _build_natural_client_experiment(
+        device_dataframes,
+        label_column="label",
+        benign_label="benign",
         max_rows_per_device=max_rows_per_device,
         seed=seed,
     )

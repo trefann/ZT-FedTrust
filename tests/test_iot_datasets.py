@@ -2,12 +2,13 @@
 
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from data.iot_datasets import _build_natural_client_experiment, _build_partitioned_experiment, load_ciciot2023, load_ton_iot_devices, load_ton_iot_network, load_unsw_nb15
+from data.iot_datasets import _build_natural_client_experiment, _build_partitioned_experiment, _read_family_attack_csvs, load_ciciot2023, load_nbaiot, load_ton_iot_devices, load_ton_iot_network, load_unsw_nb15
 
 
 def _make_partitioned_df(num_rows=200, seed=0):
@@ -341,3 +342,50 @@ class TestLoadTonIotDevices:
         )
         with pytest.raises(KeyError):
             load_ton_iot_devices(str(data_dir), max_rows_per_device=None, seed=1)
+
+
+class TestReadFamilyAttackCsvs:
+    def test_labels_derived_from_filename(self, tmp_path):
+        extracted = tmp_path / "gafgyt"
+        extracted.mkdir()
+        (extracted / "combo.csv").write_text("f1,f2\n1.0,2.0\n1.1,2.1\n", encoding="utf-8")
+        (extracted / "scan.csv").write_text("f1,f2\n3.0,4.0\n", encoding="utf-8")
+
+        df = _read_family_attack_csvs(extracted, family="gafgyt")
+        assert set(df["label"]) == {"gafgyt_combo", "gafgyt_scan"}
+        assert len(df) == 3
+
+
+class TestLoadNbaiot:
+    def _write_fixture(self, tmp_path):
+        import zipfile
+
+        data_dir = tmp_path / "ZT-Fedtrust Datasets"
+        data_dir.mkdir()
+        zip_path = data_dir / "detection+of+iot+botnet+attacks+n+baiot.zip"
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr(
+                "Danmini_Doorbell/benign_traffic.csv",
+                "f1,f2\n0.1,0.2\n0.15,0.22\n0.12,0.19\n",
+            )
+            zf.writestr("Danmini_Doorbell/gafgyt_attacks.rar", b"placeholder")
+            zf.writestr(
+                "Ecobee_Thermostat/benign_traffic.csv",
+                "f1,f2\n0.3,0.4\n0.31,0.41\n0.29,0.39\n",
+            )
+            zf.writestr("Ecobee_Thermostat/gafgyt_attacks.rar", b"placeholder")
+        return data_dir
+
+    def test_produces_one_client_per_device(self, tmp_path):
+        data_dir = self._write_fixture(tmp_path)
+
+        def fake_extract_rar(archive_path, dest_dir):
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            (dest_dir / "combo.csv").write_text("f1,f2\n9.0,9.1\n9.2,9.3\n", encoding="utf-8")
+
+        with patch("data.iot_datasets.extract_rar", side_effect=fake_extract_rar):
+            result = load_nbaiot(str(data_dir), max_rows_per_device=None, seed=1)
+
+        assert len(result.train_client_datasets) == 2
+        assert "benign" in result.class_names
+        assert "gafgyt_combo" in result.class_names
