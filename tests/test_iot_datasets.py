@@ -357,6 +357,22 @@ class TestReadFamilyAttackCsvs:
 
 
 class TestLoadNbaiot:
+    # The real N-BaIoT zip has 9 device directories; this fixture only
+    # writes 2 of them (Danmini_Doorbell, Ecobee_Thermostat).
+    # `_load_nbaiot_device_dataframes` is deliberately strict (unconditional
+    # `zf.open` for `benign_traffic.csv`, matching the TON_IoT-devices
+    # sibling loader) so it fails loudly if any of `_NBAIOT_DEVICE_DIRS` is
+    # missing its benign_traffic.csv from the zip. To exercise this smaller
+    # fixture without weakening that production strictness, every test in
+    # this class monkeypatches `_NBAIOT_DEVICE_DIRS` down to just the 2
+    # device names the fixture actually writes.
+    @pytest.fixture(autouse=True)
+    def _two_device_dirs(self, monkeypatch):
+        monkeypatch.setattr(
+            "data.iot_datasets._NBAIOT_DEVICE_DIRS",
+            ("Danmini_Doorbell", "Ecobee_Thermostat"),
+        )
+
     def _write_fixture(self, tmp_path):
         import zipfile
 
@@ -389,6 +405,23 @@ class TestLoadNbaiot:
         assert len(result.train_client_datasets) == 2
         assert "benign" in result.class_names
         assert "gafgyt_combo" in result.class_names
+
+    def test_missing_device_benign_csv_raises_keyerror(self, tmp_path, monkeypatch):
+        """A device directory missing `benign_traffic.csv` from the archive
+        must fail loudly (KeyError from zipfile), not be silently skipped."""
+        data_dir = self._write_fixture(tmp_path)
+        monkeypatch.setattr(
+            "data.iot_datasets._NBAIOT_DEVICE_DIRS",
+            ("Danmini_Doorbell", "Ecobee_Thermostat", "Ennio_Doorbell"),
+        )
+
+        def fake_extract_rar(archive_path, dest_dir):
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            (dest_dir / "combo.csv").write_text("f1,f2\n9.0,9.1\n9.2,9.3\n", encoding="utf-8")
+
+        with patch("data.iot_datasets.extract_rar", side_effect=fake_extract_rar):
+            with pytest.raises(KeyError):
+                load_nbaiot(str(data_dir), max_rows_per_device=None, seed=1)
 
 
 class TestLoadIotExperimentDispatch:

@@ -391,12 +391,9 @@ def _load_nbaiot_device_dataframe(zip_path: Path, device_name: str, cache_dir: P
 def _load_nbaiot_device_dataframes(data_dir: str) -> Dict[str, pd.DataFrame]:
     zip_path = Path(data_dir) / _NBAIOT_ZIP_FILENAME
     cache_dir = Path(_NBAIOT_CACHE_DIR)
-    with zipfile.ZipFile(zip_path) as zf:
-        present_devices = {
-            name for name in _NBAIOT_DEVICE_DIRS if f"{name}/benign_traffic.csv" in zf.namelist()
-        }
     return {
-        name: _load_nbaiot_device_dataframe(zip_path, name, cache_dir) for name in present_devices
+        name: _load_nbaiot_device_dataframe(zip_path, name, cache_dir)
+        for name in _NBAIOT_DEVICE_DIRS
     }
 
 
