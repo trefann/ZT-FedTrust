@@ -286,6 +286,13 @@ def validate_config(config: SimulationConfig) -> None:
             f"attacks.active_attack must be one of {SUPPORTED_ATTACK_TYPES}, "
             f"got {config.attacks.active_attack!r}"
         )
+    if config.attacks.active_attack == "real_traffic" and (
+        config.data.dataset in SUPPORTED_DATASETS or config.data.dataset == "ciciot2023"
+    ):
+        errors.append(
+            f"attacks.active_attack='real_traffic' requires a dataset with a benign/attack "
+            f"split — not available for {config.data.dataset!r}"
+        )
     for attack_name, probability in (
         ("label_flipping", config.attacks.label_flipping.probability),
         ("model_poisoning", config.attacks.model_poisoning.probability),
