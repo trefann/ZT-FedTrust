@@ -19,7 +19,7 @@ data:
   data_dir: "./ZT-Fedtrust Datasets"
   num_clients: 9
   batch_size: 32
-  max_rows: 5000
+  max_rows: 5000  # per-device cap for natural-client datasets, not a dataset total (up to 9x this many rows overall)
   partition:
     type: "iid"
     alpha: 0.5

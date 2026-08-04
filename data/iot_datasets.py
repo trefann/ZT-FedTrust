@@ -433,7 +433,13 @@ def load_iot_experiment(
 
     `num_clients`/`partition_type`/`dirichlet_alpha` are ignored for
     natural-client datasets (`ton_iot_devices`, `nbaiot`) — those always
-    produce one client per real device.
+    produce one client per real device. `max_rows` also means something
+    different for these two: it caps rows PER DEVICE (each of the 7-9
+    real devices is independently subsampled to at most `max_rows` rows),
+    not the dataset's total row count as it does for the partitioned
+    datasets (`ciciot2023`, `unsw_nb15`, `ton_iot_network`) — the same
+    `max_rows` value therefore yields a much larger total dataset for a
+    natural-client dataset than for a partitioned one.
     """
     if name == "ciciot2023":
         return load_ciciot2023(data_dir, num_clients, partition_type, dirichlet_alpha, max_rows, seed)
