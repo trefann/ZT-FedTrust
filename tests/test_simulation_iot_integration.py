@@ -2,8 +2,6 @@
 
 from unittest.mock import patch
 
-import pandas as pd
-import pytest
 import torch
 
 from data.iot_datasets import IoTExperimentData

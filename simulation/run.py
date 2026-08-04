@@ -495,8 +495,8 @@ def load_experiment_data(
     (loads once via `load_iot_experiment`, which returns pre-partitioned or
     natural per-client datasets already split from one deterministic pass
     over the data) or a vision dataset (existing Phase 1 path, unchanged).
-    Both `simulation/run.py::run_simulation` and
-    `evaluation/experiment_runner.py::ExperimentRunner.run` call this
+    `simulation/run.py::run_simulation` calls this; a follow-up task wires
+    `evaluation/experiment_runner.py::ExperimentRunner.run` to call it too,
     instead of duplicating the branch.
     """
     if config.data.dataset in IOT_SUPPORTED_DATASETS:
