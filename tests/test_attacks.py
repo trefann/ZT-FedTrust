@@ -1,7 +1,6 @@
 """Tests for Phase 4 attack strategies, MaliciousClient, and attack assignment."""
 
 import copy
-from unittest.mock import MagicMock
 
 import pytest
 import torch
