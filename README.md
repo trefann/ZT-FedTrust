@@ -61,12 +61,19 @@ the resulting global model.
 ```
 zt-fedtrust/
 ├── configs/
-│   └── config.yaml        # experiment configuration
+│   ├── config.yaml        # experiment configuration (vision: MNIST/CIFAR-10)
+│   └── iot/                # one starter config per real IoT dataset (ciciot2023, unsw_nb15,
+│                            # ton_iot_network, ton_iot_devices, nbaiot; botiot.yaml is a disabled placeholder)
 ├── data/
-│   ├── dataset.py         # dataset loading (MNIST, CIFAR-10)
-│   └── partition.py       # IID / Dirichlet client partitioning
+│   ├── dataset.py           # vision dataset loading (MNIST, CIFAR-10)
+│   ├── iot_datasets.py      # real IoT dataset loaders (partitioned + natural-client) + IoTExperimentData
+│   ├── iot_preprocessing.py # shared feature encoding / label vocabulary / train-test split for IoT data
+│   ├── tabular_dataset.py   # TabularDataset: Dataset wrapper for numeric feature/label arrays
+│   ├── rar_extract.py       # cached .rar extraction (N-BaIoT's attack archives)
+│   └── partition.py         # IID / Dirichlet client partitioning
 ├── models/
-│   └── cnn.py             # model architectures + factory
+│   ├── cnn.py             # CNN architectures + factory (vision datasets)
+│   └── tabular_mlp.py     # MLP for tabular IoT features
 ├── clients/
 │   ├── client.py            # simulated client: local training, get/set_weights
 │   └── malicious_client.py  # MaliciousClient (composition over Client), attack assignment (Phase 4)
@@ -75,7 +82,8 @@ zt-fedtrust/
 │   ├── label_flipping.py     # dataset-level: remaps training labels, never mutates the dataset
 │   ├── model_poisoning.py    # update-level: scales/adds noise to the real update
 │   ├── byzantine.py          # update-level: random or negated update
-│   └── sybil.py               # delegates to an underlying attack; carries Sybil group metadata
+│   ├── sybil.py               # delegates to an underlying attack; carries Sybil group metadata
+│   └── real_traffic.py        # dataset-level: replaces a client's data with real attack-labeled traffic (IoT datasets)
 ├── server/
 │   ├── server.py            # round orchestration: selection, training, aggregation, evaluation
 │   ├── fedavg.py            # FedAvg aggregation (Phase 1, unchanged)
@@ -211,11 +219,12 @@ into training.
 |--------------|-------------------------|---------------------------------------------------|
 | top-level    | `seed`                  | global RNG seed for reproducibility               |
 | top-level    | `device`                | `"cuda"` or `"cpu"` (falls back to cpu if no GPU) |
-| `data`       | `dataset`               | `"mnist"` or `"cifar10"`                          |
-| `data`       | `num_clients`           | number of simulated clients                       |
-| `data`       | `partition.type`        | `"iid"` or `"dirichlet"`                          |
+| `data`       | `dataset`               | vision: `"mnist"`, `"cifar10"`; IoT: `"ciciot2023"`, `"unsw_nb15"`, `"ton_iot_network"`, `"ton_iot_devices"`, `"nbaiot"` (`"botiot"` is a disabled placeholder — the real BoT-IoT data hasn't been supplied yet) |
+| `data`       | `num_clients`           | number of simulated clients (ignored for the natural-client IoT datasets `ton_iot_devices`/`nbaiot` — those always produce one client per real device) |
+| `data`       | `partition.type`        | `"iid"` or `"dirichlet"` (same natural-client exception as above) |
 | `data`       | `partition.alpha`       | Dirichlet concentration (lower = more non-IID)    |
-| `model`      | `name`                  | registered model name (see `models/cnn.py`)       |
+| `data`       | `max_rows`               | optional row cap, `null`/omitted = no cap. For partitioned datasets (`mnist`/`cifar10`/`ciciot2023`/`unsw_nb15`/`ton_iot_network`) this caps the dataset's *total* row count; for natural-client datasets (`ton_iot_devices`/`nbaiot`) it caps rows *per device* instead, so the same value yields a much larger total dataset there — see `configs/iot/nbaiot.yaml` |
+| `model`      | `name`                  | `"cnn"` (see `models/cnn.py`) or `"mlp"` for tabular IoT features (see `models/tabular_mlp.py`) |
 | `federated`  | `num_rounds`            | number of federated communication rounds          |
 | `federated`  | `clients_per_round`     | clients sampled to participate each round         |
 | `federated`  | `local_epochs`          | local training epochs per client per round        |
@@ -231,7 +240,7 @@ into training.
 | `aggregation` | `strategy`             | `"fedavg"` (plain, Phase 1) or `"trust_fedavg"` (trust-weighted, Phase 3) |
 | `attacks`    | `enabled`               | turn adversarial simulation on/off (all Phase 1-3 behavior when `false`) |
 | `attacks`    | `malicious_client_fraction` | fraction of clients assigned an attack, in [0, 1]           |
-| `attacks`    | `active_attack`         | `"label_flipping"` \| `"model_poisoning"` \| `"byzantine"` \| `"sybil"` |
+| `attacks`    | `active_attack`         | `"label_flipping"` \| `"model_poisoning"` \| `"byzantine"` \| `"sybil"` \| `"real_traffic"` (IoT datasets with a benign/attack split only — `validate_config` rejects it up front for vision datasets and for `ciciot2023`, which has no benign traffic) |
 | `attacks.label_flipping` | `probability`, `label_map` | per-round attack-trigger probability; optional custom `{source: target}` remap |
 | `attacks.model_poisoning` | `probability`, `scale_factor` | trigger probability; update-scaling multiplier, bounded to (0, 100] |
 | `attacks.byzantine` | `probability`, `strategy` | trigger probability; `"random"` (noise, scaled to reference norm) or `"negate"` (`-update`) |
@@ -324,6 +333,7 @@ question from real experiments — not simulated/assumed results.
 | `model_poisoning` | update | `poisoned = reference + (trained - reference) * scale_factor` (+ optional Gaussian noise). Bounded to `scale_factor ∈ (0, 100]` — validated both in config and in the attack class itself. |
 | `byzantine` | update | `"random"`: Gaussian noise rescaled to match the reference weights' own norm (abnormal direction, bounded magnitude). `"negate"`: `poisoned = reference - (trained - reference)`, i.e. the exact opposite of the real update. |
 | `sybil` | simulation | One simulated attacker controls `number_of_identities` client IDs, all performing the same underlying attack (label flipping by default), tagged with a shared `sybil_group_id` and `parent_attacker_id`. A pure bookkeeping/grouping construct — not a real identity-forgery implementation. |
+| `real_traffic` | dataset | IoT datasets only. Replaces a malicious client's local dataset with a sample of the dataset's own real attack-labeled traffic (e.g. genuine Mirai/Gafgyt-infected N-BaIoT captures) instead of training on the client's own data — models a genuinely compromised device rather than a synthetic label/update perturbation. Requires a dataset with a benign/attack split; rejected at config-validation time otherwise. |
 
 Every attack triggers **per round**, independently, with probability
 `attacks.<name>.probability` (default 1.0) — modelling an intermittent
