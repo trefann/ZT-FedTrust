@@ -23,8 +23,8 @@ class TabularDataset(Dataset):
             raise ValueError(
                 f"features/labels length mismatch: {len(features)} vs {len(labels)}"
             )
-        self.features = torch.from_numpy(np.asarray(features, dtype=np.float32))
-        self.labels = torch.from_numpy(np.asarray(labels, dtype=np.int64))
+        self.features = torch.from_numpy(np.array(features, dtype=np.float32, copy=True))
+        self.labels = torch.from_numpy(np.array(labels, dtype=np.int64, copy=True))
         self.targets: List[int] = self.labels.tolist()
 
     def __len__(self) -> int:
