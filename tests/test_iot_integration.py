@@ -65,11 +65,17 @@ def test_full_simulation_runs_on_synthetic_iot_data(tmp_path):
     config.attacks.enabled = True
     config.attacks.active_attack = "real_traffic"
     config.attacks.malicious_client_fraction = 0.34  # 2 of 6 clients
+    # Explicit (the brief's default aggregation.strategy is plain "fedavg",
+    # which never reads trust — see server/trust_fedavg.py's `use_trust`
+    # gate). Set here so this test exercises actual trust-weighted
+    # aggregation, not just trust-based selection with untrusted weighting.
+    config.aggregation.strategy = "trust_fedavg"
 
     with patch("simulation.run.load_iot_experiment", return_value=_synthetic_iot_experiment_data(config.seed)):
         history = run_simulation(config)
 
     assert config.trust.enabled is True
+    assert config.aggregation.strategy == "trust_fedavg"
     assert config.attacks.malicious_client_fraction > 0.0
     assert len(history) == config.federated.num_rounds
     for round_record in history:
