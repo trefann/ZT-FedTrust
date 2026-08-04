@@ -282,3 +282,62 @@ def load_ton_iot_network(
         max_rows=max_rows,
         seed=seed,
     )
+
+
+_TON_IOT_DEVICE_ENTRIES = {
+    "fridge": "Train_Test_datasets/Train_Test_IoT_dataset/Train_Test_IoT_Fridge.csv",
+    "garage_door": "Train_Test_datasets/Train_Test_IoT_dataset/Train_Test_IoT_Garage_Door.csv",
+    "gps_tracker": "Train_Test_datasets/Train_Test_IoT_dataset/Train_Test_IoT_GPS_Tracker.csv",
+    "modbus": "Train_Test_datasets/Train_Test_IoT_dataset/Train_Test_IoT_Modbus.csv",
+    "motion_light": "Train_Test_datasets/Train_Test_IoT_dataset/Train_Test_IoT_Motion_Light.csv",
+    "thermostat": "Train_Test_datasets/Train_Test_IoT_dataset/Train_Test_IoT_Thermostat.csv",
+    "weather": "Train_Test_datasets/Train_Test_IoT_dataset/Train_Test_IoT_Weather.csv",
+}
+_TON_IOT_DEVICE_DROP_COLUMNS = ["date", "time", "label"]
+
+
+def _load_ton_iot_device_dataframes(data_dir: str) -> Dict[str, pd.DataFrame]:
+    zip_path = Path(data_dir) / _TON_IOT_ZIP_FILENAME
+    raw: Dict[str, pd.DataFrame] = {}
+    with zipfile.ZipFile(zip_path) as zf:
+        available = set(zf.namelist())
+        for device_name, entry in _TON_IOT_DEVICE_ENTRIES.items():
+            if entry not in available:
+                continue
+            with zf.open(entry) as f:
+                df = pd.read_csv(f, encoding="utf-8-sig")
+            raw[device_name] = df.drop(
+                columns=[c for c in _TON_IOT_DEVICE_DROP_COLUMNS if c in df.columns]
+            )
+
+    all_feature_columns = sorted(
+        {col for df in raw.values() for col in df.columns if col != "type"}
+    )
+    reindexed: Dict[str, pd.DataFrame] = {}
+    for device_name, df in raw.items():
+        missing = [c for c in all_feature_columns if c not in df.columns]
+        for col in missing:
+            df[col] = 0.0
+        reindexed[device_name] = df[all_feature_columns + ["type"]]
+    return reindexed
+
+
+def load_ton_iot_devices(
+    data_dir: str, max_rows_per_device: Optional[int], seed: int
+) -> IoTExperimentData:
+    """Each of TON_IoT's 7 real device sources becomes one client — no
+    Dirichlet/IID partitioning. Devices don't share sensor columns (Fridge
+    reports temperature, Garage_Door reports door state, ...), so every
+    device's dataframe is reindexed onto the union of all 7 devices'
+    columns before fitting one shared `FeatureEncoder` — a device's
+    non-applicable columns are filled with 0.0, which `FeatureEncoder`
+    then standardizes like any other numeric value.
+    """
+    device_dataframes = _load_ton_iot_device_dataframes(data_dir)
+    return _build_natural_client_experiment(
+        device_dataframes,
+        label_column="type",
+        benign_label="normal",
+        max_rows_per_device=max_rows_per_device,
+        seed=seed,
+    )

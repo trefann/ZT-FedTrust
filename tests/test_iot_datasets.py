@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from data.iot_datasets import _build_natural_client_experiment, _build_partitioned_experiment, load_ciciot2023, load_ton_iot_network, load_unsw_nb15
+from data.iot_datasets import _build_natural_client_experiment, _build_partitioned_experiment, load_ciciot2023, load_ton_iot_devices, load_ton_iot_network, load_unsw_nb15
 
 
 def _make_partitioned_df(num_rows=200, seed=0):
@@ -264,3 +264,46 @@ class TestLoadTonIotNetwork:
             dirichlet_alpha=0.5, max_rows=None, seed=1,
         )
         assert result.attack_pool is not None
+
+
+class TestLoadTonIotDevices:
+    def _write_fixture(self, tmp_path):
+        import zipfile
+
+        data_dir = tmp_path / "ZT-Fedtrust Datasets"
+        data_dir.mkdir()
+        with zipfile.ZipFile(data_dir / "Train_Test_datasets.zip", "w") as zf:
+            zf.writestr(
+                "Train_Test_datasets/Train_Test_IoT_dataset/Train_Test_IoT_Fridge.csv",
+                "date,time,fridge_temperature,temp_condition,label,type\n"
+                "25-Apr-19,19:19:40,9,high,1,ddos\n"
+                "25-Apr-19,19:19:45,4.6,low,0,normal\n"
+                "25-Apr-19,19:19:50,5.1,low,0,normal\n",
+            )
+            zf.writestr(
+                "Train_Test_datasets/Train_Test_IoT_dataset/Train_Test_IoT_Garage_Door.csv",
+                "date,time,door_state,sphone_signal,label,type\n"
+                "25-Apr-19,19:19:40,open,1,1,backdoor\n"
+                "25-Apr-19,19:19:45,closed,0,0,normal\n"
+                "25-Apr-19,19:19:50,closed,0,0,normal\n",
+            )
+        return data_dir
+
+    def test_produces_one_client_per_device(self, tmp_path):
+        data_dir = self._write_fixture(tmp_path)
+        result = load_ton_iot_devices(str(data_dir), max_rows_per_device=None, seed=1)
+        assert len(result.train_client_datasets) == 2
+
+    def test_shared_feature_space_across_devices(self, tmp_path):
+        data_dir = self._write_fixture(tmp_path)
+        result = load_ton_iot_devices(str(data_dir), max_rows_per_device=None, seed=1)
+        # union of fridge_temperature, temp_condition, door_state, sphone_signal
+        assert result.input_dim == 4
+        for dataset in result.train_client_datasets.values():
+            features, _ = dataset[0]
+            assert features.shape == (4,)
+
+    def test_class_vocabulary_spans_both_devices(self, tmp_path):
+        data_dir = self._write_fixture(tmp_path)
+        result = load_ton_iot_devices(str(data_dir), max_rows_per_device=None, seed=1)
+        assert result.class_names == ["backdoor", "ddos", "normal"]
