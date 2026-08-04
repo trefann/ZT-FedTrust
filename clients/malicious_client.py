@@ -24,11 +24,13 @@ from typing import Any, Dict, List, Optional, Set, Union
 
 import torch
 import torch.nn as nn
+from torch.utils.data import Dataset
 
 from attacks.base_attack import BaseAttack
 from attacks.byzantine import ByzantineAttack
 from attacks.label_flipping import LabelFlippingAttack
 from attacks.model_poisoning import ModelPoisoningAttack
+from attacks.real_traffic import RealAttackTrafficAttack
 from attacks.sybil import SybilAttack
 from clients.client import Client, LocalTrainResult
 from utils.validation import validate_state_dict
@@ -179,13 +181,21 @@ class MaliciousClient:
         return result
 
 
-def build_attack(active_attack: str, attack_settings: Dict[str, Dict[str, Any]], seed: int) -> BaseAttack:
+def build_attack(
+    active_attack: str,
+    attack_settings: Dict[str, Dict[str, Any]],
+    seed: int,
+    attack_dataset: Optional[Dataset] = None,
+) -> BaseAttack:
     """Construct the configured attack strategy by name.
 
     `attack_settings` is the flattened `{"label_flipping": {...}, ...}` dict
     produced by `simulation.run.AttackConfig` (kept as plain dicts here,
     rather than importing that dataclass, to avoid a circular import between
     `simulation/run.py` and this module).
+
+    `attack_dataset` is only consumed by `"real_traffic"` — the other four
+    attacks are synthetic transformations that don't need real data.
     """
     if active_attack == "label_flipping":
         settings = attack_settings.get("label_flipping", {})
@@ -200,6 +210,13 @@ def build_attack(active_attack: str, attack_settings: Dict[str, Dict[str, Any]],
         # Sybils need a concrete underlying behaviour; label flipping is the
         # simplest deterministic default. See `attacks/sybil.py`.
         return SybilAttack(LabelFlippingAttack())
+    if active_attack == "real_traffic":
+        if attack_dataset is None:
+            raise ValueError(
+                "active_attack='real_traffic' requires attack_dataset (a pool of real "
+                "attack-labeled samples) — not available for this dataset."
+            )
+        return RealAttackTrafficAttack(attack_pool=attack_dataset, seed=seed)
     raise ValueError(f"Unknown active_attack: {active_attack!r}")
 
 
@@ -209,6 +226,7 @@ def assign_attacks(
     active_attack: str,
     attack_settings: Dict[str, Dict[str, Any]],
     seed: int,
+    attack_dataset: Optional[Dataset] = None,
 ) -> Dict[int, Union[Client, MaliciousClient]]:
     """Deterministically mark a fraction of `clients` as malicious.
 
@@ -261,7 +279,9 @@ def assign_attacks(
         settings = attack_settings.get(active_attack, {})
         probability = settings.get("probability", 1.0)
         for client_id in malicious_ids:
-            attack = build_attack(active_attack, attack_settings, seed=seed + client_id)
+            attack = build_attack(
+                active_attack, attack_settings, seed=seed + client_id, attack_dataset=attack_dataset
+            )
             result[client_id] = MaliciousClient(
                 clients[client_id], attack, attack_probability=probability, seed=seed + client_id
             )
