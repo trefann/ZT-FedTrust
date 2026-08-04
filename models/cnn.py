@@ -6,6 +6,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from models.tabular_mlp import TabularMLP
+
 
 class SimpleCNN(nn.Module):
     """A small CNN suitable for MNIST/CIFAR-style image classification.
@@ -34,7 +36,7 @@ class SimpleCNN(nn.Module):
         return self.fc2(x)
 
 
-_MODEL_REGISTRY = {"cnn": SimpleCNN}
+_MODEL_REGISTRY = {"cnn": SimpleCNN, "mlp": TabularMLP}
 
 
 def build_model(name: str, in_channels: int, num_classes: int) -> nn.Module:
