@@ -418,3 +418,41 @@ def load_nbaiot(data_dir: str, max_rows_per_device: Optional[int], seed: int) ->
         max_rows_per_device=max_rows_per_device,
         seed=seed,
     )
+
+
+IOT_SUPPORTED_DATASETS = ("ciciot2023", "unsw_nb15", "ton_iot_network", "ton_iot_devices", "nbaiot")
+
+_NATURAL_CLIENT_DATASETS = ("ton_iot_devices", "nbaiot")
+
+
+def load_iot_experiment(
+    name: str,
+    data_dir: str,
+    max_rows: Optional[int],
+    num_clients: int,
+    partition_type: str,
+    dirichlet_alpha: float,
+    seed: int,
+) -> IoTExperimentData:
+    """Dispatch to the right per-dataset loader by name.
+
+    `num_clients`/`partition_type`/`dirichlet_alpha` are ignored for
+    natural-client datasets (`ton_iot_devices`, `nbaiot`) — those always
+    produce one client per real device.
+    """
+    if name == "ciciot2023":
+        return load_ciciot2023(data_dir, num_clients, partition_type, dirichlet_alpha, max_rows, seed)
+    if name == "unsw_nb15":
+        return load_unsw_nb15(data_dir, num_clients, partition_type, dirichlet_alpha, max_rows, seed)
+    if name == "ton_iot_network":
+        return load_ton_iot_network(data_dir, num_clients, partition_type, dirichlet_alpha, max_rows, seed)
+    if name == "ton_iot_devices":
+        return load_ton_iot_devices(data_dir, max_rows, seed)
+    if name == "nbaiot":
+        return load_nbaiot(data_dir, max_rows, seed)
+    if name == "botiot":
+        raise ValueError(
+            "botiot is a disabled placeholder: the real BoT-IoT dataset has not been "
+            "supplied yet. Use one of: " + ", ".join(IOT_SUPPORTED_DATASETS)
+        )
+    raise ValueError(f"Unknown IoT dataset: {name!r}. Supported: {list(IOT_SUPPORTED_DATASETS)}")

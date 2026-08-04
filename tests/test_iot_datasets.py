@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from data.iot_datasets import _build_natural_client_experiment, _build_partitioned_experiment, _read_family_attack_csvs, load_ciciot2023, load_nbaiot, load_ton_iot_devices, load_ton_iot_network, load_unsw_nb15
+from data.iot_datasets import IOT_SUPPORTED_DATASETS, _build_natural_client_experiment, _build_partitioned_experiment, _read_family_attack_csvs, load_ciciot2023, load_iot_experiment, load_nbaiot, load_ton_iot_devices, load_ton_iot_network, load_unsw_nb15
 
 
 def _make_partitioned_df(num_rows=200, seed=0):
@@ -389,3 +389,25 @@ class TestLoadNbaiot:
         assert len(result.train_client_datasets) == 2
         assert "benign" in result.class_names
         assert "gafgyt_combo" in result.class_names
+
+
+class TestLoadIotExperimentDispatch:
+    def test_supported_datasets_tuple_contents(self):
+        assert set(IOT_SUPPORTED_DATASETS) == {
+            "ciciot2023", "unsw_nb15", "ton_iot_network", "ton_iot_devices", "nbaiot",
+        }
+
+    def test_dispatches_to_ciciot2023(self, tmp_path):
+        data_dir = TestLoadCiciot2023()._write_fixture(tmp_path)
+        result = load_iot_experiment(
+            "ciciot2023", str(data_dir), max_rows=None, num_clients=2,
+            partition_type="iid", dirichlet_alpha=0.5, seed=1,
+        )
+        assert len(result.train_client_datasets) == 2
+
+    def test_unknown_dataset_raises_value_error(self, tmp_path):
+        with pytest.raises(ValueError, match="botiot"):
+            load_iot_experiment(
+                "botiot", str(tmp_path), max_rows=None, num_clients=2,
+                partition_type="iid", dirichlet_alpha=0.5, seed=1,
+            )
