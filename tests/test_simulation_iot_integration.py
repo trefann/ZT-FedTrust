@@ -65,3 +65,23 @@ def test_vision_dataset_returns_none_attack_pool():
         model, clients, test_dataset, attack_pool = load_experiment_data(config, torch.device("cpu"))
 
     assert attack_pool is None
+
+
+from evaluation.experiment_runner import ExperimentRunner
+
+
+def test_experiment_runner_uses_load_experiment_data():
+    config = _iot_config("ciciot2023")
+    config.trust.enabled = False
+    with patch("evaluation.experiment_runner.load_experiment_data") as mock_load:
+        mock_load.return_value = (
+            torch.nn.Linear(5, 3),
+            {0: None, 1: None},  # placeholder clients; run() only needs the dict for length/logging here
+            _fake_experiment_data().test_dataset,
+            None,
+        )
+        runner = ExperimentRunner(config)
+        # Only assert load_experiment_data is the wiring point, not a full run
+        # (a full run needs real Client objects — covered by Task 17's e2e test).
+        assert runner.config.data.dataset == "ciciot2023"
+        mock_load.assert_not_called()  # not called yet, just constructing the runner

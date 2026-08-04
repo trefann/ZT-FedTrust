@@ -5,8 +5,8 @@ architecture, client count, rounds, local epochs, learning rate, and random
 seed (all read from one `SimulationConfig`) — the *only* thing that differs
 between modes is which defensive/attack machinery is wired into `Server`,
 isolating exactly the variable each experiment is meant to test. This
-module reuses `simulation.run`'s `build_clients`/`resolve_device` rather
-than duplicating them.
+module reuses `simulation.run`'s `load_experiment_data`/`resolve_device`
+rather than duplicating them.
 
 Import direction note: this module imports FROM `simulation.run`.
 `simulation/run.py` only ever imports this module back inside a function
@@ -20,7 +20,6 @@ from typing import Any, Dict, List, Optional, Union
 
 from clients.client import Client
 from clients.malicious_client import MaliciousClient, assign_attacks, known_identity_ids
-from data.dataset import dataset_shape, load_dataset
 from evaluation.security_metrics import (
     AttackHistoryRecord,
     SecurityMetricsRecord,
@@ -30,11 +29,10 @@ from evaluation.security_metrics import (
     save_security_metrics_csv,
     save_security_plots,
 )
-from models.cnn import build_model
 from server.selection_metrics import save_accuracy_comparison_plot
 from server.selector import ClientSelector
 from server.server import Server
-from simulation.run import SimulationConfig, build_clients, resolve_device
+from simulation.run import SimulationConfig, load_experiment_data, resolve_device
 from trust.trust_engine import TrustEngine, TrustWeights
 from trust.trust_policy import TrustPolicy
 from utils.metrics import set_seed
@@ -112,11 +110,8 @@ class ExperimentRunner:
         set_seed(config.seed)
         device = resolve_device(config.device)
 
-        in_channels, num_classes = dataset_shape(config.data.dataset)
-        test_dataset = load_dataset(config.data.dataset, config.data.data_dir, train=False)
-
-        global_model = build_model(config.model.name, in_channels, num_classes)
-        clients: Dict[int, Union[Client, MaliciousClient]] = build_clients(config, device, global_model)
+        global_model, built_clients, test_dataset, attack_pool = load_experiment_data(config, device)
+        clients: Dict[int, Union[Client, MaliciousClient]] = built_clients
 
         use_attacks = mode != "baseline" and config.attacks.enabled
         if use_attacks:
@@ -126,6 +121,7 @@ class ExperimentRunner:
                 active_attack=config.attacks.active_attack,
                 attack_settings=_attack_settings(config),
                 seed=config.seed,
+                attack_dataset=attack_pool,
             )
 
         use_trust = mode == "ztfedtrust_attack"
