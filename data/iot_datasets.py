@@ -300,10 +300,7 @@ def _load_ton_iot_device_dataframes(data_dir: str) -> Dict[str, pd.DataFrame]:
     zip_path = Path(data_dir) / _TON_IOT_ZIP_FILENAME
     raw: Dict[str, pd.DataFrame] = {}
     with zipfile.ZipFile(zip_path) as zf:
-        available = set(zf.namelist())
         for device_name, entry in _TON_IOT_DEVICE_ENTRIES.items():
-            if entry not in available:
-                continue
             with zf.open(entry) as f:
                 df = pd.read_csv(f, encoding="utf-8-sig")
             raw[device_name] = df.drop(

@@ -267,6 +267,25 @@ class TestLoadTonIotNetwork:
 
 
 class TestLoadTonIotDevices:
+    # The real TON_IoT zip has 7 device CSVs; this fixture only writes 2 of
+    # them (Fridge, Garage_Door). `_load_ton_iot_device_dataframes` is
+    # deliberately strict (unconditional `zf.open`, matching the sibling
+    # loaders) so it fails loudly if any of `_TON_IOT_DEVICE_ENTRIES` is
+    # missing from the zip. To exercise the reindex/union-schema logic
+    # against this smaller fixture without weakening that production
+    # strictness, every test in this class monkeypatches
+    # `_TON_IOT_DEVICE_ENTRIES` down to just the 2 entries the fixture
+    # actually writes.
+    @pytest.fixture(autouse=True)
+    def _two_device_entries(self, monkeypatch):
+        monkeypatch.setattr(
+            "data.iot_datasets._TON_IOT_DEVICE_ENTRIES",
+            {
+                "fridge": "Train_Test_datasets/Train_Test_IoT_dataset/Train_Test_IoT_Fridge.csv",
+                "garage_door": "Train_Test_datasets/Train_Test_IoT_dataset/Train_Test_IoT_Garage_Door.csv",
+            },
+        )
+
     def _write_fixture(self, tmp_path):
         import zipfile
 
@@ -307,3 +326,18 @@ class TestLoadTonIotDevices:
         data_dir = self._write_fixture(tmp_path)
         result = load_ton_iot_devices(str(data_dir), max_rows_per_device=None, seed=1)
         assert result.class_names == ["backdoor", "ddos", "normal"]
+
+    def test_missing_device_entry_raises_keyerror(self, tmp_path, monkeypatch):
+        """A device zip entry missing from the archive must fail loudly
+        (KeyError from zipfile), not be silently skipped."""
+        data_dir = self._write_fixture(tmp_path)
+        monkeypatch.setattr(
+            "data.iot_datasets._TON_IOT_DEVICE_ENTRIES",
+            {
+                "fridge": "Train_Test_datasets/Train_Test_IoT_dataset/Train_Test_IoT_Fridge.csv",
+                "garage_door": "Train_Test_datasets/Train_Test_IoT_dataset/Train_Test_IoT_Garage_Door.csv",
+                "missing_device": "Train_Test_datasets/Train_Test_IoT_dataset/Train_Test_IoT_Does_Not_Exist.csv",
+            },
+        )
+        with pytest.raises(KeyError):
+            load_ton_iot_devices(str(data_dir), max_rows_per_device=None, seed=1)
