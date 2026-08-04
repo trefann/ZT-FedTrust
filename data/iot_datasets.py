@@ -245,3 +245,40 @@ def load_unsw_nb15(
         max_rows=max_rows,
         seed=seed,
     )
+
+
+_TON_IOT_ZIP_FILENAME = "Train_Test_datasets.zip"
+_TON_IOT_NETWORK_ENTRY = "Train_Test_datasets/Train_Test_Network_dataset/train_test_network.csv"
+_TON_IOT_NETWORK_DROP_COLUMNS = [
+    "src_ip", "dst_ip", "dns_query", "ssl_subject", "ssl_issuer",
+    "http_uri", "http_user_agent", "label",
+]
+
+
+def _load_ton_iot_network_dataframe(data_dir: str) -> pd.DataFrame:
+    zip_path = Path(data_dir) / _TON_IOT_ZIP_FILENAME
+    with zipfile.ZipFile(zip_path) as zf:
+        with zf.open(_TON_IOT_NETWORK_ENTRY) as f:
+            df = pd.read_csv(f, encoding="utf-8-sig")
+    return df.drop(columns=[c for c in _TON_IOT_NETWORK_DROP_COLUMNS if c in df.columns])
+
+
+def load_ton_iot_network(
+    data_dir: str,
+    num_clients: int,
+    partition_type: str,
+    dirichlet_alpha: float,
+    max_rows: Optional[int],
+    seed: int,
+) -> IoTExperimentData:
+    df = _load_ton_iot_network_dataframe(data_dir)
+    return _build_partitioned_experiment(
+        df,
+        label_column="type",
+        benign_label="normal",
+        num_clients=num_clients,
+        partition_type=partition_type,
+        dirichlet_alpha=dirichlet_alpha,
+        max_rows=max_rows,
+        seed=seed,
+    )

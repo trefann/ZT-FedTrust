@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from data.iot_datasets import _build_natural_client_experiment, _build_partitioned_experiment, load_ciciot2023, load_unsw_nb15
+from data.iot_datasets import _build_natural_client_experiment, _build_partitioned_experiment, load_ciciot2023, load_ton_iot_network, load_unsw_nb15
 
 
 def _make_partitioned_df(num_rows=200, seed=0):
@@ -221,3 +221,46 @@ class TestLoadUnswNb15:
         )
         assert result.attack_pool is not None
         assert len(result.attack_pool) > 0
+
+
+class TestLoadTonIotNetwork:
+    def _write_fixture(self, tmp_path):
+        header = (
+            "src_ip,src_port,dst_ip,dst_port,proto,service,duration,src_bytes,"
+            "dst_bytes,conn_state,dns_query,ssl_subject,ssl_issuer,http_uri,"
+            "http_user_agent,label,type\n"
+        )
+        rows = [
+            "192.168.1.1,80,192.168.1.2,443,tcp,-,0.1,100,200,SF,-,-,-,-,-,0,normal\n",
+            "192.168.1.3,53,192.168.1.4,53,udp,dns,0.05,60,80,SF,example.com,-,-,-,-,0,normal\n",
+            "192.168.1.5,4444,192.168.1.6,80,tcp,-,2.3,900,50,REJ,-,-,-,-,-,1,backdoor\n",
+            "192.168.1.7,80,192.168.1.8,80,tcp,http,0.9,500,600,SF,-,-,-,/x,curl,1,ddos\n",
+            "192.168.1.9,80,192.168.1.10,443,tcp,-,0.2,110,210,SF,-,-,-,-,-,0,normal\n",
+            "192.168.1.11,4444,192.168.1.12,80,tcp,-,3.1,950,40,REJ,-,-,-,-,-,1,backdoor\n",
+        ]
+        data_dir = tmp_path / "ZT-Fedtrust Datasets"
+        data_dir.mkdir()
+        with zipfile.ZipFile(data_dir / "Train_Test_datasets.zip", "w") as zf:
+            zf.writestr(
+                "Train_Test_datasets/Train_Test_Network_dataset/train_test_network.csv",
+                header + "".join(rows),
+            )
+        return data_dir
+
+    def test_drops_identity_columns(self, tmp_path):
+        data_dir = self._write_fixture(tmp_path)
+        result = load_ton_iot_network(
+            str(data_dir), num_clients=2, partition_type="iid",
+            dirichlet_alpha=0.5, max_rows=None, seed=1,
+        )
+        # src_port,dst_port,proto,service,duration,src_bytes,dst_bytes,conn_state = 8 features
+        assert result.input_dim == 8
+        assert "normal" in result.class_names
+
+    def test_attack_pool_present(self, tmp_path):
+        data_dir = self._write_fixture(tmp_path)
+        result = load_ton_iot_network(
+            str(data_dir), num_clients=2, partition_type="iid",
+            dirichlet_alpha=0.5, max_rows=None, seed=1,
+        )
+        assert result.attack_pool is not None
