@@ -19,6 +19,7 @@ different feature counts) and return one `IoTExperimentData` bundle.
 
 from __future__ import annotations
 
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -201,6 +202,43 @@ def load_ciciot2023(
         df,
         label_column="label",
         benign_label=None,
+        num_clients=num_clients,
+        partition_type=partition_type,
+        dirichlet_alpha=dirichlet_alpha,
+        max_rows=max_rows,
+        seed=seed,
+    )
+
+
+_UNSW_NB15_ZIP_FILENAME = "UNSW-NB15 dataset.zip"
+_UNSW_NB15_TRAIN_ENTRY = "CSV Files/Training and Testing Sets/UNSW_NB15_training-set.csv"
+_UNSW_NB15_TEST_ENTRY = "CSV Files/Training and Testing Sets/UNSW_NB15_testing-set.csv"
+
+
+def _load_unsw_nb15_dataframe(data_dir: str) -> pd.DataFrame:
+    zip_path = Path(data_dir) / _UNSW_NB15_ZIP_FILENAME
+    with zipfile.ZipFile(zip_path) as zf:
+        with zf.open(_UNSW_NB15_TRAIN_ENTRY) as f:
+            train_df = pd.read_csv(f, encoding="utf-8-sig")
+        with zf.open(_UNSW_NB15_TEST_ENTRY) as f:
+            test_df = pd.read_csv(f, encoding="utf-8-sig")
+    df = pd.concat([train_df, test_df], ignore_index=True)
+    return df.drop(columns=["id", "label"])
+
+
+def load_unsw_nb15(
+    data_dir: str,
+    num_clients: int,
+    partition_type: str,
+    dirichlet_alpha: float,
+    max_rows: Optional[int],
+    seed: int,
+) -> IoTExperimentData:
+    df = _load_unsw_nb15_dataframe(data_dir)
+    return _build_partitioned_experiment(
+        df,
+        label_column="attack_cat",
+        benign_label="Normal",
         num_clients=num_clients,
         partition_type=partition_type,
         dirichlet_alpha=dirichlet_alpha,

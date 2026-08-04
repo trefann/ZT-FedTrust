@@ -1,12 +1,14 @@
 """Tests for the shared IoT experiment builders and, in later tasks, per-dataset loaders."""
 
+import io
+import zipfile
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from data.iot_datasets import _build_natural_client_experiment, _build_partitioned_experiment, load_ciciot2023
+from data.iot_datasets import _build_natural_client_experiment, _build_partitioned_experiment, load_ciciot2023, load_unsw_nb15
 
 
 def _make_partitioned_df(num_rows=200, seed=0):
@@ -173,3 +175,50 @@ class TestLoadCiciot2023:
             dirichlet_alpha=0.5, max_rows=None, seed=1,
         )
         assert result.attack_pool is None
+
+
+class TestLoadUnswNb15:
+    def _write_fixture(self, tmp_path):
+        header = (
+            "id,dur,proto,service,state,spkts,dpkts,sbytes,dbytes,attack_cat,label\n"
+        )
+        rows = [
+            "1,0.12,tcp,-,FIN,6,4,258,172,Normal,0\n",
+            "2,0.65,tcp,-,FIN,14,38,734,42014,Normal,0\n",
+            "3,1.62,tcp,-,FIN,8,16,364,13186,Exploits,1\n",
+            "4,0.02,udp,dns,CON,2,2,146,178,Reconnaissance,1\n",
+            "5,0.09,tcp,http,FIN,10,8,600,900,Normal,0\n",
+            "6,0.44,tcp,-,FIN,12,20,700,1200,Exploits,1\n",
+            "7,0.31,udp,dns,CON,3,3,150,190,Reconnaissance,1\n",
+            "8,0.77,tcp,http,FIN,9,7,620,880,Normal,0\n",
+        ]
+        data_dir = tmp_path / "ZT-Fedtrust Datasets"
+        data_dir.mkdir()
+        with zipfile.ZipFile(data_dir / "UNSW-NB15 dataset.zip", "w") as zf:
+            zf.writestr(
+                "CSV Files/Training and Testing Sets/UNSW_NB15_training-set.csv",
+                header + "".join(rows[:6]),
+            )
+            zf.writestr(
+                "CSV Files/Training and Testing Sets/UNSW_NB15_testing-set.csv",
+                header + "".join(rows[6:]),
+            )
+        return data_dir
+
+    def test_loads_and_drops_id_and_binary_label(self, tmp_path):
+        data_dir = self._write_fixture(tmp_path)
+        result = load_unsw_nb15(
+            str(data_dir), num_clients=2, partition_type="iid",
+            dirichlet_alpha=0.5, max_rows=None, seed=1,
+        )
+        assert result.input_dim == 8  # dur, proto, service, state, spkts, dpkts, sbytes, dbytes
+        assert "Normal" in result.class_names
+
+    def test_attack_pool_excludes_normal_rows(self, tmp_path):
+        data_dir = self._write_fixture(tmp_path)
+        result = load_unsw_nb15(
+            str(data_dir), num_clients=2, partition_type="iid",
+            dirichlet_alpha=0.5, max_rows=None, seed=1,
+        )
+        assert result.attack_pool is not None
+        assert len(result.attack_pool) > 0
