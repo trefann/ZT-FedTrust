@@ -77,7 +77,20 @@ class Client:
         """Train the local model in place for `local_epochs`, starting from its current weights."""
         self.model.train()
 
-        loader = DataLoader(self.dataset, batch_size=self.batch_size, shuffle=True)
+        # Drop a leftover final batch of exactly 1 sample (but only when a
+        # full batch is still available without it) so BatchNorm-based
+        # models (e.g. `models/tabular_mlp.py::TabularMLP`) never receive a
+        # training batch of size 1 — `nn.BatchNorm1d.forward` raises
+        # "Expected more than 1 value per channel when training" for that
+        # case, since per-channel variance is undefined for N=1. Batches of
+        # size >= 2 are numerically fine for BatchNorm, so this only trims
+        # the specific size-1 remainder rather than every partial batch.
+        # Datasets that don't even fill one batch (`len(self.dataset) <=
+        # self.batch_size`) still get their single, necessarily under-full,
+        # batch — same as before.
+        remainder = len(self.dataset) % self.batch_size
+        drop_last = remainder == 1 and len(self.dataset) > self.batch_size
+        loader = DataLoader(self.dataset, batch_size=self.batch_size, shuffle=True, drop_last=drop_last)
         optimizer = torch.optim.SGD(
             self.model.parameters(), lr=self.learning_rate, momentum=self.momentum
         )
