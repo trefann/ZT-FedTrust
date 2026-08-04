@@ -69,3 +69,12 @@ def test_invalid_values_raise_value_error(override, bad_value):
     config = _base_config(**{override: bad_value})
     with pytest.raises(ValueError):
         validate_config(config)
+
+
+def test_iot_dataset_name_passes_validation():
+    validate_config(_base_config(**{"data.dataset": "ciciot2023"}))  # should not raise
+
+
+def test_max_rows_defaults_to_none():
+    config = _base_config()
+    assert config.data.max_rows is None
