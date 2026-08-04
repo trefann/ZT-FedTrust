@@ -1,0 +1,77 @@
+# N-BaIoT: 9 real IoT devices as 9 natural federated clients, benign vs.
+# Mirai/Gafgyt-subtype multi-class classification. Supports
+# active_attack: real_traffic (this is the dataset the design spec
+# specifically calls out for it — malicious clients train on genuine
+# Mirai/Gafgyt-infected traffic).
+#
+# Requires 7-Zip or unrar installed on the machine the first time this
+# runs (extracts the .rar attack archives; cached afterward). See
+# data/rar_extract.py.
+#
+# Usage:
+#   python simulation/run.py --config configs/iot/nbaiot.yaml --experiment compare_all
+
+seed: 42
+device: "cpu"
+
+data:
+  dataset: "nbaiot"
+  data_dir: "./ZT-Fedtrust Datasets"
+  num_clients: 9
+  batch_size: 32
+  max_rows: 5000
+  partition:
+    type: "iid"
+    alpha: 0.5
+
+model:
+  name: "mlp"
+
+federated:
+  num_rounds: 5
+  clients_per_round: 7
+  local_epochs: 1
+  learning_rate: 0.01
+  momentum: 0.9
+
+logging:
+  log_dir: "./results/iot_nbaiot/logs"
+  log_level: "INFO"
+  results_dir: "./results/iot_nbaiot"
+
+trust:
+  enabled: true
+  initial_reputation: 0.80
+  reputation_alpha: 0.80
+  threshold_mode: adaptive
+  threshold: 0.60
+  participation_fraction: 0.70
+  weights:
+    identity: 0.25
+    integrity: 0.20
+    behaviour: 0.20
+    reputation: 0.15
+    update_quality: 0.20
+
+aggregation:
+  strategy: trust_fedavg
+
+attacks:
+  enabled: true
+  malicious_client_fraction: 0.20
+  active_attack: real_traffic
+  label_flipping:
+    enabled: false
+    probability: 1.0
+  model_poisoning:
+    enabled: false
+    probability: 1.0
+    scale_factor: 5.0
+  byzantine:
+    enabled: false
+    probability: 1.0
+    strategy: negate
+  sybil:
+    enabled: false
+    number_of_identities: 3
+    probability: 1.0

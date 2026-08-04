@@ -1,0 +1,72 @@
+# CICIoT2023 multi-class DDoS-subtype classification. This source slice
+# contains only DDoS-family attack traffic (no benign rows), so
+# active_attack: real_traffic is not usable here (see data/iot_datasets.py's
+# load_ciciot2023 docstring) — use label_flipping/model_poisoning/byzantine/sybil.
+#
+# Usage:
+#   python simulation/run.py --config configs/iot/ciciot2023.yaml --experiment compare_all
+
+seed: 42
+device: "cpu"
+
+data:
+  dataset: "ciciot2023"
+  data_dir: "./ZT-Fedtrust Datasets"   # point this at the folder containing the real archives
+  num_clients: 10
+  batch_size: 32
+  max_rows: 5000   # set to null for full-dataset, paper-quality runs
+  partition:
+    type: "dirichlet"
+    alpha: 0.5
+
+model:
+  name: "mlp"
+
+federated:
+  num_rounds: 5
+  clients_per_round: 6
+  local_epochs: 1
+  learning_rate: 0.01
+  momentum: 0.9
+
+logging:
+  log_dir: "./results/iot_ciciot2023/logs"
+  log_level: "INFO"
+  results_dir: "./results/iot_ciciot2023"
+
+trust:
+  enabled: true
+  initial_reputation: 0.80
+  reputation_alpha: 0.80
+  threshold_mode: adaptive
+  threshold: 0.60
+  participation_fraction: 0.70
+  weights:
+    identity: 0.25
+    integrity: 0.20
+    behaviour: 0.20
+    reputation: 0.15
+    update_quality: 0.20
+
+aggregation:
+  strategy: trust_fedavg
+
+attacks:
+  enabled: true
+  malicious_client_fraction: 0.20
+  active_attack: byzantine
+  label_flipping:
+    enabled: false
+    probability: 1.0
+  model_poisoning:
+    enabled: false
+    probability: 1.0
+    scale_factor: 5.0
+  byzantine:
+    enabled: true
+    probability: 1.0
+    strategy: negate
+  sybil:
+    enabled: false
+    number_of_identities: 3
+    probability: 1.0
