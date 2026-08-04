@@ -71,17 +71,23 @@ from evaluation.experiment_runner import ExperimentRunner
 
 
 def test_experiment_runner_uses_load_experiment_data():
+    """End-to-end: ExperimentRunner.run() actually works on IoT data.
+
+    Patches only the deepest call in the chain
+    (`simulation.run.load_iot_experiment`) so the real wiring —
+    `ExperimentRunner.run()` -> `simulation.run.load_experiment_data()` ->
+    `simulation.run.load_iot_experiment()` -> model/client construction ->
+    `Server` -> federated rounds — all executes for real, the same way
+    `tests/test_iot_integration.py`'s `run_simulation` capstone test does
+    for the plain-function entry point.
+    """
     config = _iot_config("ciciot2023")
     config.trust.enabled = False
-    with patch("evaluation.experiment_runner.load_experiment_data") as mock_load:
-        mock_load.return_value = (
-            torch.nn.Linear(5, 3),
-            {0: None, 1: None},  # placeholder clients; run() only needs the dict for length/logging here
-            _fake_experiment_data().test_dataset,
-            None,
-        )
+    with patch("simulation.run.load_iot_experiment", return_value=_fake_experiment_data()):
         runner = ExperimentRunner(config)
-        # Only assert load_experiment_data is the wiring point, not a full run
-        # (a full run needs real Client objects — covered by Task 17's e2e test).
-        assert runner.config.data.dataset == "ciciot2023"
-        mock_load.assert_not_called()  # not called yet, just constructing the runner
+        result = runner.run("baseline")
+
+    assert len(result.history) == config.federated.num_rounds
+    for round_record in result.history:
+        assert "test_accuracy" in round_record
+        assert 0.0 <= round_record["test_accuracy"] <= 1.0
