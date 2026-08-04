@@ -422,8 +422,6 @@ def load_nbaiot(data_dir: str, max_rows_per_device: Optional[int], seed: int) ->
 
 IOT_SUPPORTED_DATASETS = ("ciciot2023", "unsw_nb15", "ton_iot_network", "ton_iot_devices", "nbaiot")
 
-_NATURAL_CLIENT_DATASETS = ("ton_iot_devices", "nbaiot")
-
 
 def load_iot_experiment(
     name: str,

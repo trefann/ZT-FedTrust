@@ -405,6 +405,21 @@ class TestLoadIotExperimentDispatch:
         )
         assert len(result.train_client_datasets) == 2
 
+    def test_dispatches_to_ton_iot_devices(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "data.iot_datasets._TON_IOT_DEVICE_ENTRIES",
+            {
+                "fridge": "Train_Test_datasets/Train_Test_IoT_dataset/Train_Test_IoT_Fridge.csv",
+                "garage_door": "Train_Test_datasets/Train_Test_IoT_dataset/Train_Test_IoT_Garage_Door.csv",
+            },
+        )
+        data_dir = TestLoadTonIotDevices()._write_fixture(tmp_path)
+        result = load_iot_experiment(
+            "ton_iot_devices", str(data_dir), max_rows=None, num_clients=2,
+            partition_type="iid", dirichlet_alpha=0.5, seed=1,
+        )
+        assert len(result.train_client_datasets) == 2
+
     def test_unknown_dataset_raises_value_error(self, tmp_path):
         with pytest.raises(ValueError, match="botiot"):
             load_iot_experiment(
