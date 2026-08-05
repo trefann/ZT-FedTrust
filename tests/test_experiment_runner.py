@@ -76,3 +76,11 @@ def test_attack_settings_flattens_config_correctly():
     assert settings["model_poisoning"]["scale_factor"] == 5.0
     assert settings["byzantine"]["strategy"] == "random"
     assert settings["sybil"]["number_of_identities"] == 3
+    assert settings["real_traffic"] == {"probability": 1.0}
+
+
+def test_attack_settings_reflects_configured_real_traffic_probability():
+    config = _base_config()
+    config.attacks.real_traffic.probability = 0.3
+    settings = _attack_settings(config)
+    assert settings["real_traffic"] == {"probability": 0.3}

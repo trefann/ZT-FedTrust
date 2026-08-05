@@ -70,3 +70,9 @@ attacks:
     enabled: false
     number_of_identities: 3
     probability: 1.0
+  real_traffic:
+    # Not usable on this dataset — no benign traffic exists in this
+    # CICIoT2023 slice, see load_ciciot2023's docstring. validate_config
+    # rejects active_attack: real_traffic for this dataset up front.
+    enabled: false
+    probability: 1.0

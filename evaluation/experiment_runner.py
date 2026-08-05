@@ -66,6 +66,9 @@ def _attack_settings(config: SimulationConfig) -> Dict[str, Dict[str, Any]]:
             "probability": attacks.sybil.probability,
             "number_of_identities": attacks.sybil.number_of_identities,
         },
+        "real_traffic": {
+            "probability": attacks.real_traffic.probability,
+        },
     }
 
 

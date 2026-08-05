@@ -68,3 +68,6 @@ attacks:
     enabled: false
     number_of_identities: 3
     probability: 1.0
+  real_traffic:
+    enabled: true
+    probability: 1.0

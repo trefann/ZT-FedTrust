@@ -153,10 +153,16 @@ class SybilConfig:
 
 
 @dataclass
+class RealTrafficConfig:
+    enabled: bool = False
+    probability: float = 1.0
+
+
+@dataclass
 class AttackConfig:
     """Phase 4 adversarial attack simulation settings.
 
-    `active_attack` selects which of the four attack blocks below actually
+    `active_attack` selects which of the five attack blocks below actually
     applies to malicious clients this run; each block's own settings are
     only read when it's the active one (or, for `sybil`, always read for
     its underlying-attack probability). All disabled by default so plain
@@ -170,6 +176,7 @@ class AttackConfig:
     model_poisoning: ModelPoisoningConfig = field(default_factory=ModelPoisoningConfig)
     byzantine: ByzantineConfig = field(default_factory=ByzantineConfig)
     sybil: SybilConfig = field(default_factory=SybilConfig)
+    real_traffic: RealTrafficConfig = field(default_factory=RealTrafficConfig)
 
 
 @dataclass
@@ -298,6 +305,7 @@ def validate_config(config: SimulationConfig) -> None:
         ("model_poisoning", config.attacks.model_poisoning.probability),
         ("byzantine", config.attacks.byzantine.probability),
         ("sybil", config.attacks.sybil.probability),
+        ("real_traffic", config.attacks.real_traffic.probability),
     ):
         if not 0.0 <= probability <= 1.0:
             errors.append(f"attacks.{attack_name}.probability must be in [0, 1], got {probability}")
@@ -338,6 +346,7 @@ def load_config(config_path: str) -> SimulationConfig:
     model_poisoning_raw = attacks_raw.get("model_poisoning", {})
     byzantine_raw = attacks_raw.get("byzantine", {})
     sybil_raw = attacks_raw.get("sybil", {})
+    real_traffic_raw = attacks_raw.get("real_traffic", {})
 
     config = SimulationConfig(
         seed=raw["seed"],
@@ -404,6 +413,10 @@ def load_config(config_path: str) -> SimulationConfig:
                 number_of_identities=sybil_raw.get("number_of_identities", 3),
                 probability=sybil_raw.get("probability", 1.0),
             ),
+            real_traffic=RealTrafficConfig(
+                enabled=real_traffic_raw.get("enabled", False),
+                probability=real_traffic_raw.get("probability", 1.0),
+            ),
         ),
     )
     validate_config(config)
@@ -436,6 +449,9 @@ def _attack_settings(config: SimulationConfig) -> Dict[str, Dict[str, Any]]:
         "sybil": {
             "probability": attacks.sybil.probability,
             "number_of_identities": attacks.sybil.number_of_identities,
+        },
+        "real_traffic": {
+            "probability": attacks.real_traffic.probability,
         },
     }
 

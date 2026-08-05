@@ -14,6 +14,7 @@ from evaluation.benchmark import (
     MasterRecord,
     _select_mode,
     build_simulation_config,
+    load_benchmark_config,
 )
 
 
@@ -96,6 +97,45 @@ def test_no_override_uses_settings_defaults():
     config = build_simulation_config(settings, "ztfedtrust", "none", 0.0, 42, "results")
     assert config.trust.threshold == 0.65
     assert config.trust.weights.identity == settings.trust_weights["identity"]
+
+
+# --------------------------------------------------------------------------
+# max_rows: caps IoT dataset size for benchmark cells (MNIST/CIFAR-10 ignore it)
+# --------------------------------------------------------------------------
+
+
+def test_experiment_settings_max_rows_defaults_to_none():
+    assert ExperimentSettings().max_rows is None
+
+
+def test_build_simulation_config_threads_max_rows_into_data_config():
+    settings = _settings(dataset="unsw_nb15", max_rows=5000)
+    config = build_simulation_config(settings, "fedavg", "none", 0.0, 42, "results")
+    assert config.data.max_rows == 5000
+
+
+def test_build_simulation_config_defaults_max_rows_to_none():
+    config = build_simulation_config(_settings(), "fedavg", "none", 0.0, 42, "results")
+    assert config.data.max_rows is None
+
+
+def test_load_benchmark_config_parses_max_rows(tmp_path):
+    config_path = tmp_path / "benchmark.yaml"
+    config_path.write_text(
+        "experiment:\n"
+        "  dataset: unsw_nb15\n"
+        "  max_rows: 5000\n",
+        encoding="utf-8",
+    )
+    config = load_benchmark_config(str(config_path))
+    assert config.experiment.max_rows == 5000
+
+
+def test_load_benchmark_config_defaults_max_rows_to_none(tmp_path):
+    config_path = tmp_path / "benchmark.yaml"
+    config_path.write_text("experiment:\n  dataset: mnist\n", encoding="utf-8")
+    config = load_benchmark_config(str(config_path))
+    assert config.experiment.max_rows is None
 
 
 # --------------------------------------------------------------------------
