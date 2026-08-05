@@ -69,3 +69,33 @@ def test_invalid_values_raise_value_error(override, bad_value):
     config = _base_config(**{override: bad_value})
     with pytest.raises(ValueError):
         validate_config(config)
+
+
+def test_iot_dataset_name_passes_validation():
+    validate_config(_base_config(**{"data.dataset": "ciciot2023"}))  # should not raise
+
+
+def test_max_rows_defaults_to_none():
+    config = _base_config()
+    assert config.data.max_rows is None
+
+
+def test_real_traffic_attack_on_ciciot2023_fails_validation():
+    """CICIoT2023 has no benign/attack split (see `load_ciciot2023`'s
+    docstring in `data/iot_datasets.py`), so `real_traffic` must be
+    rejected up front rather than failing deep inside `build_attack`."""
+    config = _base_config(**{
+        "data.dataset": "ciciot2023",
+        "attacks.active_attack": "real_traffic",
+    })
+    with pytest.raises(ValueError):
+        validate_config(config)
+
+
+def test_real_traffic_attack_on_unsw_nb15_passes_validation():
+    """UNSW-NB15 does have a benign/attack split, so `real_traffic` is valid."""
+    config = _base_config(**{
+        "data.dataset": "unsw_nb15",
+        "attacks.active_attack": "real_traffic",
+    })
+    validate_config(config)  # should not raise

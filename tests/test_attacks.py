@@ -4,14 +4,17 @@ import copy
 
 import pytest
 import torch
+from torch.utils.data import TensorDataset
 
+from attacks import SUPPORTED_ATTACK_TYPES
 from attacks.base_attack import BaseAttack
 from attacks.byzantine import ByzantineAttack
 from attacks.label_flipping import DEFAULT_LABEL_MAP, LabelFlippingAttack
 from attacks.model_poisoning import MAX_SCALE_FACTOR, ModelPoisoningAttack
+from attacks.real_traffic import RealAttackTrafficAttack
 from attacks.sybil import SybilAttack
 from clients.client import Client
-from clients.malicious_client import MaliciousClient, assign_attacks, known_identity_ids
+from clients.malicious_client import MaliciousClient, assign_attacks, build_attack, known_identity_ids
 from helpers import make_synthetic_dataset
 from models.cnn import build_model
 from server.selector import ClientSelector
@@ -297,6 +300,26 @@ def test_known_identity_ids_excludes_non_parent_sybils():
     # Every benign client remains known.
     benign_ids = [cid for cid, c in result.items() if not isinstance(c, MaliciousClient)]
     assert all(cid in known for cid in benign_ids)
+
+
+# --------------------------------------------------------------------------
+# real_traffic wiring (build_attack / SUPPORTED_ATTACK_TYPES)
+# --------------------------------------------------------------------------
+
+
+def test_real_traffic_in_supported_attack_types():
+    assert "real_traffic" in SUPPORTED_ATTACK_TYPES
+
+
+def test_build_attack_real_traffic_with_dataset():
+    pool = TensorDataset(torch.randn(10, 3), torch.ones(10, dtype=torch.int64))
+    attack = build_attack("real_traffic", {}, seed=1, attack_dataset=pool)
+    assert isinstance(attack, RealAttackTrafficAttack)
+
+
+def test_build_attack_real_traffic_without_dataset_raises():
+    with pytest.raises(ValueError, match="attack_dataset"):
+        build_attack("real_traffic", {}, seed=1, attack_dataset=None)
 
 
 # --------------------------------------------------------------------------

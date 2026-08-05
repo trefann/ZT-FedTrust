@@ -7,10 +7,11 @@ import csv
 import sys
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import yaml
+from torch.utils.data import Dataset
 
 # Allow running as a standalone script (`python simulation/run.py`) by putting
 # the project root on sys.path so sibling top-level packages are importable.
@@ -22,6 +23,7 @@ from attacks.model_poisoning import MAX_SCALE_FACTOR
 from clients.client import Client
 from clients.malicious_client import assign_attacks, known_identity_ids
 from data.dataset import SUPPORTED_DATASETS, dataset_shape, load_dataset
+from data.iot_datasets import IOT_SUPPORTED_DATASETS, load_iot_experiment
 from data.partition import (
     SUPPORTED_PARTITION_TYPES,
     make_client_subsets,
@@ -63,6 +65,7 @@ class DataConfig:
     partition_type: str
     dirichlet_alpha: float
     batch_size: int
+    max_rows: Optional[int] = None
 
 
 @dataclass
@@ -198,8 +201,11 @@ def validate_config(config: SimulationConfig) -> None:
     if config.device not in _VALID_DEVICES:
         errors.append(f"device must be one of {_VALID_DEVICES}, got {config.device!r}")
 
-    if config.data.dataset not in SUPPORTED_DATASETS:
-        errors.append(f"data.dataset must be one of {SUPPORTED_DATASETS}, got {config.data.dataset!r}")
+    if config.data.dataset not in SUPPORTED_DATASETS and config.data.dataset not in IOT_SUPPORTED_DATASETS:
+        errors.append(
+            f"data.dataset must be one of {SUPPORTED_DATASETS + IOT_SUPPORTED_DATASETS}, "
+            f"got {config.data.dataset!r}"
+        )
     if config.data.num_clients <= 0:
         errors.append(f"data.num_clients must be > 0, got {config.data.num_clients}")
     if config.data.partition_type not in SUPPORTED_PARTITION_TYPES:
@@ -280,6 +286,13 @@ def validate_config(config: SimulationConfig) -> None:
             f"attacks.active_attack must be one of {SUPPORTED_ATTACK_TYPES}, "
             f"got {config.attacks.active_attack!r}"
         )
+    if config.attacks.active_attack == "real_traffic" and (
+        config.data.dataset in SUPPORTED_DATASETS or config.data.dataset == "ciciot2023"
+    ):
+        errors.append(
+            f"attacks.active_attack='real_traffic' requires a dataset with a benign/attack "
+            f"split — not available for {config.data.dataset!r}"
+        )
     for attack_name, probability in (
         ("label_flipping", config.attacks.label_flipping.probability),
         ("model_poisoning", config.attacks.model_poisoning.probability),
@@ -336,6 +349,7 @@ def load_config(config_path: str) -> SimulationConfig:
             partition_type=partition_raw["type"],
             dirichlet_alpha=partition_raw.get("alpha", 0.5),
             batch_size=data_raw["batch_size"],
+            max_rows=data_raw.get("max_rows"),
         ),
         model=ModelConfig(name=raw["model"]["name"]),
         federated=FederatedConfig(
@@ -478,6 +492,53 @@ def build_clients(
     }
 
 
+def load_experiment_data(
+    config: SimulationConfig, device: torch.device
+) -> Tuple[torch.nn.Module, Dict[int, Client], Dataset, Optional[Dataset]]:
+    """Resolve the global model, per-client training data, the global test
+    set, and (where available) a real-attack-traffic pool for `config`.
+
+    Branches on whether `config.data.dataset` is one of `IOT_SUPPORTED_DATASETS`
+    (loads once via `load_iot_experiment`, which returns pre-partitioned or
+    natural per-client datasets already split from one deterministic pass
+    over the data) or a vision dataset (existing Phase 1 path, unchanged).
+    `simulation/run.py::run_simulation` calls this; a follow-up task wires
+    `evaluation/experiment_runner.py::ExperimentRunner.run` to call it too,
+    instead of duplicating the branch.
+    """
+    if config.data.dataset in IOT_SUPPORTED_DATASETS:
+        experiment_data = load_iot_experiment(
+            name=config.data.dataset,
+            data_dir=config.data.data_dir,
+            max_rows=config.data.max_rows,
+            num_clients=config.data.num_clients,
+            partition_type=config.data.partition_type,
+            dirichlet_alpha=config.data.dirichlet_alpha,
+            seed=config.seed,
+        )
+        global_model = build_model(config.model.name, experiment_data.input_dim, experiment_data.num_classes)
+        clients = {
+            client_id: Client(
+                client_id=client_id,
+                model_template=global_model,
+                dataset=dataset,
+                device=device,
+                batch_size=config.data.batch_size,
+                learning_rate=config.federated.learning_rate,
+                momentum=config.federated.momentum,
+                local_epochs=config.federated.local_epochs,
+            )
+            for client_id, dataset in experiment_data.train_client_datasets.items()
+        }
+        return global_model, clients, experiment_data.test_dataset, experiment_data.attack_pool
+
+    in_channels, num_classes = dataset_shape(config.data.dataset)
+    test_dataset = load_dataset(config.data.dataset, config.data.data_dir, train=False)
+    global_model = build_model(config.model.name, in_channels, num_classes)
+    clients = build_clients(config, device, global_model)
+    return global_model, clients, test_dataset, None
+
+
 def run_simulation(config: SimulationConfig) -> List[Dict[str, float]]:
     """Build all components from `config` and run the full federated simulation."""
     set_seed(config.seed)
@@ -486,11 +547,7 @@ def run_simulation(config: SimulationConfig) -> List[Dict[str, float]]:
     logger.info("Starting simulation on device=%s", device)
     logger.info("Config: %s", config)
 
-    in_channels, num_classes = dataset_shape(config.data.dataset)
-    test_dataset = load_dataset(config.data.dataset, config.data.data_dir, train=False)
-
-    global_model = build_model(config.model.name, in_channels, num_classes)
-    clients = build_clients(config, device, global_model)
+    global_model, clients, test_dataset, attack_pool = load_experiment_data(config, device)
 
     if config.attacks.enabled:
         clients = assign_attacks(
@@ -499,6 +556,7 @@ def run_simulation(config: SimulationConfig) -> List[Dict[str, float]]:
             active_attack=config.attacks.active_attack,
             attack_settings=_attack_settings(config),
             seed=config.seed,
+            attack_dataset=attack_pool,
         )
 
     trust_engine: Optional[TrustEngine] = None
