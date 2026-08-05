@@ -245,6 +245,7 @@ into training.
 | `attacks.model_poisoning` | `probability`, `scale_factor` | trigger probability; update-scaling multiplier, bounded to (0, 100] |
 | `attacks.byzantine` | `probability`, `strategy` | trigger probability; `"random"` (noise, scaled to reference norm) or `"negate"` (`-update`) |
 | `attacks.sybil` | `number_of_identities`, `probability` | Sybil group size; per-identity trigger probability |
+| `attacks.real_traffic` | `probability` | per-round attack-trigger probability |
 
 ## Zero Trust evaluation (Phase 2)
 
