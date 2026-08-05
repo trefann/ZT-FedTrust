@@ -99,3 +99,18 @@ def test_real_traffic_attack_on_unsw_nb15_passes_validation():
         "attacks.active_attack": "real_traffic",
     })
     validate_config(config)  # should not raise
+
+
+def test_real_traffic_probability_defaults_to_one():
+    config = _base_config()
+    assert config.attacks.real_traffic.probability == 1.0
+
+
+def test_real_traffic_invalid_probability_raises_value_error():
+    config = _base_config(**{
+        "data.dataset": "unsw_nb15",
+        "attacks.active_attack": "real_traffic",
+    })
+    config.attacks.real_traffic.probability = 1.5
+    with pytest.raises(ValueError):
+        validate_config(config)
