@@ -129,6 +129,12 @@ class ExperimentSettings:
         }
     )
     bytes_per_param: int = 4
+    # Caps dataset size for IoT datasets (see data/iot_datasets.py) — None
+    # loads the full dataset. MNIST/CIFAR-10 have a fixed size and ignore
+    # this. Without a knob here, every cell in run_matrix() would re-parse
+    # the full source archive from scratch, which is impractical at real
+    # IoT dataset scale.
+    max_rows: Optional[int] = None
 
 
 @dataclass
@@ -175,6 +181,7 @@ def load_benchmark_config(path: str) -> BenchmarkConfig:
         aggregation_strategy=experiment_raw.get("aggregation_strategy", defaults.aggregation_strategy),
         trust_weights=experiment_raw.get("trust_weights", defaults.trust_weights),
         bytes_per_param=experiment_raw.get("bytes_per_param", defaults.bytes_per_param),
+        max_rows=experiment_raw.get("max_rows", defaults.max_rows),
     )
 
     return BenchmarkConfig(
@@ -310,6 +317,7 @@ def build_simulation_config(
             partition_type=settings.partition_type,
             dirichlet_alpha=settings.dirichlet_alpha,
             batch_size=settings.batch_size,
+            max_rows=settings.max_rows,
         ),
         model=ModelConfig(name=settings.model_name),
         federated=FederatedConfig(
