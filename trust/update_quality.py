@@ -5,12 +5,16 @@ four dimensions, this one is computed from real training signal rather than
 simulated — the client's returned weights and reported training loss — so it
 is the dimension most directly indicative of an honest, well-behaved update.
 
-Three metrics are combined into one score, each mapped to [0, 1]:
+Four metrics are combined into one score, each mapped to [0, 1]:
 
   - training loss improvement vs. this client's own previous round
   - cosine similarity between the client's update direction and the round's
     sample-weighted mean update direction (a proxy for "consensus" before
     FedAvg aggregation actually runs)
+  - cosine similarity between the client's update direction and its own
+    behavior-derived peer cluster's mean update direction — catches a
+    misbehaving client even when the whole population has no shared
+    baseline to deviate from (see `trust/peer_clustering.py`)
   - update magnitude (L2 norm of the pseudo-gradient), min-max normalised
     against the other participating clients this round
 
@@ -27,6 +31,8 @@ from __future__ import annotations
 from typing import Dict, List
 
 import torch
+
+from trust.peer_clustering import cluster_clients
 
 
 def _flatten_state_dict(state_dict: Dict[str, torch.Tensor]) -> torch.Tensor:
@@ -54,9 +60,10 @@ class UpdateQualityEvaluator:
         # Relative weight of each metric in the combined score. Adding a new
         # metric is just: compute it in `evaluate_round` and add it here.
         self.metric_weights: Dict[str, float] = {
-            "loss_improvement": 0.40,
-            "cosine_similarity": 0.35,
-            "gradient_norm": 0.25,
+            "loss_improvement": 0.30,
+            "cosine_similarity": 0.20,
+            "peer_cluster_similarity": 0.30,
+            "gradient_norm": 0.20,
         }
         self._previous_loss: Dict[int, float] = {}
 
@@ -93,11 +100,21 @@ class UpdateQualityEvaluator:
         norms = {client_id: float(torch.linalg.norm(vec)) for client_id, vec in client_vectors.items()}
         norm_values = list(norms.values())
 
+        cluster_assignments = cluster_clients(client_vectors)
+        cluster_means = self._compute_cluster_means(client_vectors, sample_counts, cluster_assignments)
+        cluster_peer_counts: Dict[int, int] = {}
+        for cluster_id in cluster_assignments.values():
+            cluster_peer_counts[cluster_id] = cluster_peer_counts.get(cluster_id, 0) + 1
+
         scores: Dict[int, float] = {}
         for client_id, vector in client_vectors.items():
+            cluster_id = cluster_assignments[client_id]
             metrics = {
                 "loss_improvement": self._loss_improvement_score(client_id, average_losses[client_id]),
                 "cosine_similarity": self._cosine_similarity_score(vector, mean_vector),
+                "peer_cluster_similarity": self._peer_cluster_similarity_score(
+                    vector, cluster_means[cluster_id], cluster_peer_counts[cluster_id]
+                ),
                 "gradient_norm": self._gradient_norm_score(norms[client_id], norm_values),
             }
             self._previous_loss[client_id] = average_losses[client_id]
@@ -133,6 +150,50 @@ class UpdateQualityEvaluator:
             return 0.5  # no meaningful direction to compare against
         cosine = torch.nn.functional.cosine_similarity(
             client_vector.unsqueeze(0), mean_vector.unsqueeze(0)
+        ).item()
+        return float((cosine + 1.0) / 2.0)
+
+    @staticmethod
+    def _compute_cluster_means(
+        client_vectors: Dict[int, torch.Tensor],
+        sample_counts: Dict[int, int],
+        cluster_assignments: Dict[int, int],
+    ) -> Dict[int, torch.Tensor]:
+        """Sample-weighted mean update vector per cluster (same weighting
+        convention as the round's own global mean_vector above)."""
+        cluster_totals: Dict[int, torch.Tensor] = {}
+        cluster_sample_totals: Dict[int, int] = {}
+        for client_id, vector in client_vectors.items():
+            cluster_id = cluster_assignments[client_id]
+            weighted = vector * sample_counts[client_id]
+            if cluster_id not in cluster_totals:
+                cluster_totals[cluster_id] = weighted.clone()
+                cluster_sample_totals[cluster_id] = sample_counts[client_id]
+            else:
+                cluster_totals[cluster_id] = cluster_totals[cluster_id] + weighted
+                cluster_sample_totals[cluster_id] += sample_counts[client_id]
+        return {
+            cluster_id: total / cluster_sample_totals[cluster_id]
+            for cluster_id, total in cluster_totals.items()
+        }
+
+    @staticmethod
+    def _peer_cluster_similarity_score(
+        client_vector: torch.Tensor, cluster_mean_vector: torch.Tensor, cluster_size: int
+    ) -> float:
+        """Score how aligned this client's update is with its own cluster's mean update.
+
+        A client alone in its own cluster (`cluster_size == 1`) has no
+        peers to compare against — neutral score, the same convention this
+        file's other "no meaningful comparison available" cases already
+        use (see `_cosine_similarity_score` and `_gradient_norm_score`).
+        """
+        if cluster_size < 2:
+            return 0.5
+        if torch.linalg.norm(client_vector) < 1e-12 or torch.linalg.norm(cluster_mean_vector) < 1e-12:
+            return 0.5
+        cosine = torch.nn.functional.cosine_similarity(
+            client_vector.unsqueeze(0), cluster_mean_vector.unsqueeze(0)
         ).item()
         return float((cosine + 1.0) / 2.0)
 

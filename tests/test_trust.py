@@ -162,6 +162,76 @@ def test_update_quality_rewards_loss_improvement_across_rounds():
     assert improved[0] > improved[1]
 
 
+def test_update_quality_metric_weights_include_peer_cluster_similarity():
+    evaluator = UpdateQualityEvaluator()
+    assert "peer_cluster_similarity" in evaluator.metric_weights
+
+
+def test_peer_cluster_similarity_score_rewards_alignment_with_cluster_mean():
+    score = UpdateQualityEvaluator._peer_cluster_similarity_score(
+        client_vector=torch.tensor([1.0, 0.0, 0.0]),
+        cluster_mean_vector=torch.tensor([0.9, 0.1, 0.0]),
+        cluster_size=2,
+    )
+    assert score > 0.9
+
+
+def test_peer_cluster_similarity_score_penalizes_misalignment_with_cluster_mean():
+    score = UpdateQualityEvaluator._peer_cluster_similarity_score(
+        client_vector=torch.tensor([1.0, 0.0, 0.0]),
+        cluster_mean_vector=torch.tensor([-1.0, 0.0, 0.0]),
+        cluster_size=2,
+    )
+    assert score < 0.1
+
+
+def test_peer_cluster_similarity_score_neutral_when_alone_in_cluster():
+    score = UpdateQualityEvaluator._peer_cluster_similarity_score(
+        client_vector=torch.tensor([1.0, 0.0, 0.0]),
+        cluster_mean_vector=torch.tensor([1.0, 0.0, 0.0]),
+        cluster_size=1,
+    )
+    assert score == 0.5
+
+
+def test_compute_cluster_means_is_sample_weighted_average_per_cluster():
+    client_vectors = {
+        0: torch.tensor([1.0, 0.0]),
+        1: torch.tensor([3.0, 0.0]),
+        2: torch.tensor([0.0, 5.0]),
+    }
+    sample_counts = {0: 10, 1: 30, 2: 99}
+    cluster_assignments = {0: 1, 1: 1, 2: 2}  # clients 0,1 share cluster 1; client 2 alone in cluster 2
+
+    means = UpdateQualityEvaluator._compute_cluster_means(client_vectors, sample_counts, cluster_assignments)
+
+    assert set(means.keys()) == {1, 2}
+    # Cluster 1: sample-weighted mean of [1,0]*10 and [3,0]*30 over 40 samples -> [2.5, 0]
+    assert torch.allclose(means[1], torch.tensor([2.5, 0.0]))
+    assert torch.allclose(means[2], torch.tensor([0.0, 5.0]))
+
+
+def test_update_quality_scores_still_bounded_with_more_participants():
+    """Wiring-level check: evaluate_round produces one bounded score per
+    client even with enough participants (>=3) to actually trigger clustering."""
+    evaluator = UpdateQualityEvaluator()
+    global_state = {"w": torch.zeros(6)}
+    client_states = {
+        0: {"w": torch.tensor([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]) * 0.1},
+        1: {"w": torch.tensor([0.95, 0.05, 0.0, 0.0, 0.0, 0.0]) * 0.1},
+        2: {"w": torch.tensor([0.9, 0.1, 0.0, 0.0, 0.0, 0.0]) * 0.1},
+        3: {"w": torch.tensor([0.0, 0.0, 0.0, 0.0, -1.0, 0.0]) * 0.1},
+        4: {"w": torch.tensor([0.0, 0.0, 0.0, 0.0, -0.95, -0.05]) * 0.1},
+    }
+    sample_counts = {i: 10 for i in range(5)}
+    average_losses = {i: 1.0 for i in range(5)}
+
+    scores = evaluator.evaluate_round(client_states, sample_counts, global_state, average_losses)
+    assert set(scores.keys()) == {0, 1, 2, 3, 4}
+    for score in scores.values():
+        assert 0.0 <= score <= 1.0
+
+
 # --------------------------------------------------------------------------
 # TrustEngine composition + determinism
 # --------------------------------------------------------------------------
