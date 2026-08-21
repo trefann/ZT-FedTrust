@@ -97,64 +97,105 @@ built to fix.
 
 ## Step 3: N-BaIoT ground-truth check
 
-Command run:
+**Correction (this revision):** the original version of this section
+compared numbers read *per malicious client* from
+`AttackHistoryRecord.aggregation_weight` (e.g. "client 0: weight=0.167,
+client 1: weight=0.167") against the project's prior documented baseline of
+0.33-0.50, which is a *combined* metric — the sum of both malicious
+clients' weight in a round, exactly as computed by
+`compute_malicious_aggregation_weight()` in `evaluation/attack_metrics.py`.
+Those are different units (one client's share vs. both clients' share) and
+are not comparable; reading "0.167" against a "0.33-0.50" baseline made the
+result look like a roughly 2x improvement when the correct combined number
+for that same round was actually 0.333 — statistically unchanged from the
+baseline. This section has been rewritten below using the same combined
+metric the baseline was computed with, and adds the benign-vs-malicious
+trust comparison the original script never computed (it only ever printed
+records where `rec.is_malicious` was true, so there was no benign
+comparison to check against).
 
-```bash
-python -c "
+Command run (`python`, from the repo root, with `PYTHONPATH` set to the
+repo root):
+
+```python
+from collections import defaultdict
 from simulation.run import load_config
 from evaluation.experiment_runner import ExperimentRunner
+from evaluation.attack_metrics import compute_malicious_aggregation_weight
 
-cfg = load_config('configs/iot/nbaiot.yaml')
-result = ExperimentRunner(cfg).run('ztfedtrust_attack')
+def summarize(label, records):
+    by_round = defaultdict(list)
+    for rec in records:
+        by_round[rec.round_num].append(rec)
+    for round_num in sorted(by_round):
+        round_recs = by_round[round_num]
+        is_malicious = {r.client_id: r.is_malicious for r in round_recs}
+        agg_weights = {r.client_id: r.aggregation_weight for r in round_recs}
+        combined_weight = compute_malicious_aggregation_weight(is_malicious, agg_weights)
+        malicious_trust = [r.trust_score for r in round_recs if r.is_malicious]
+        benign_trust = [r.trust_score for r in round_recs if not r.is_malicious]
+        mal_mean = sum(malicious_trust) / len(malicious_trust)
+        ben_mean = sum(benign_trust) / len(benign_trust)
+        print(f"round={round_num} combined_malicious_weight={combined_weight:.3f} "
+              f"malicious_mean_trust={mal_mean:.3f} benign_mean_trust={ben_mean:.3f} "
+              f"malicious_higher={mal_mean > ben_mean}")
 
-for rec in result.attack_history_records:
-    if rec.is_malicious:
-        print(f'round={rec.round_num} client={rec.client_id} trust={rec.trust_score:.3f} selected={rec.selected} weight={rec.aggregation_weight:.3f}')
-"
+cfg = load_config("configs/iot/nbaiot.yaml")
+runner = ExperimentRunner(cfg)
+zt_result = runner.run("ztfedtrust_attack")
+summarize("nbaiot ztfedtrust_attack", zt_result.attack_history_records)
+fedavg_result = runner.run("fedavg_attack")
+summarize("nbaiot fedavg_attack (undefended baseline)", fedavg_result.attack_history_records)
 ```
 
-Full output (malicious clients only):
+Output:
 
 ```
-round=1 client=0 trust=0.899 selected=True  weight=0.167
-round=1 client=1 trust=0.891 selected=True  weight=0.167
-round=2 client=0 trust=0.937 selected=True  weight=0.237
-round=2 client=1 trust=0.940 selected=True  weight=0.235
-round=3 client=0 trust=0.896 selected=True  weight=0.253
-round=3 client=1 trust=0.940 selected=False weight=0.000
-round=4 client=0 trust=0.882 selected=True  weight=0.200
-round=4 client=1 trust=0.899 selected=True  weight=0.209
-round=5 client=0 trust=0.892 selected=True  weight=0.201
-round=5 client=1 trust=0.891 selected=True  weight=0.205
+=== nbaiot ztfedtrust_attack ===
+round=1 combined_malicious_weight=0.333 malicious_mean_trust=0.895 benign_mean_trust=0.922 malicious_higher=False
+round=2 combined_malicious_weight=0.472 malicious_mean_trust=0.939 benign_mean_trust=0.876 malicious_higher=True
+round=3 combined_malicious_weight=0.253 malicious_mean_trust=0.918 benign_mean_trust=0.861 malicious_higher=True
+round=4 combined_malicious_weight=0.409 malicious_mean_trust=0.891 benign_mean_trust=0.854 malicious_higher=True
+round=5 combined_malicious_weight=0.406 malicious_mean_trust=0.891 benign_mean_trust=0.854 malicious_higher=True
+
+=== nbaiot fedavg_attack (undefended baseline) ===
+round=1 combined_malicious_weight=0.286 malicious_mean_trust=1.000 benign_mean_trust=1.000 malicious_higher=False
+round=2 combined_malicious_weight=0.286 malicious_mean_trust=1.000 benign_mean_trust=1.000 malicious_higher=False
+round=3 combined_malicious_weight=0.286 malicious_mean_trust=1.000 benign_mean_trust=1.000 malicious_higher=False
+round=4 combined_malicious_weight=0.286 malicious_mean_trust=1.000 benign_mean_trust=1.000 malicious_higher=False
+round=5 combined_malicious_weight=0.143 malicious_mean_trust=1.000 benign_mean_trust=1.000 malicious_higher=False
 ```
+
+(The raw per-client `trust`/`selected`/`weight` values behind this — e.g.
+round 1 client 0 weight=0.167, client 1 weight=0.167, combining to
+0.333 — are consistent with what the original, incorrectly-compared table
+in an earlier version of this section showed; the per-client numbers
+themselves were not wrong, only the comparison built on top of them.)
 
 **Comparison against the project's prior documented N-BaIoT finding**
-(malicious aggregation weight 0.33-0.50 throughout, never trending down,
-versus undefended FedAvg's 0.14-0.29):
+(combined malicious aggregation weight 0.33-0.50 throughout, never trending
+down, versus undefended FedAvg's 0.14-0.29):
 
-This run's malicious-client weights range from **0.167 to 0.253** (one
-round, round 3 client 1, dropped to full exclusion at 0.000). This is a
-clear, real shift: the malicious clients are no longer being given *more*
-weight than an undefended baseline would — they now sit inside or below
-the undefended range (0.14-0.29), instead of above it (0.33-0.50) as
-documented before this feature. That is the specific failure this feature
-was built to fix, and it is fixed on this run: `peer_cluster_similarity`
-is pulling the malicious clients' composite trust down relative to their
-own behavioral peers, where the old population-mean-only signal wasn't.
+This run's **combined** malicious weight ranges from **0.253 to 0.472**
+(round-by-round: 0.333, 0.472, 0.253, 0.409, 0.406) — still mostly *at or
+above* the undefended baseline of 0.143-0.286 (confirmed by the
+`fedavg_attack` re-run above, which matches the previously-cited "14-29%"),
+and essentially statistically unchanged from the prior documented failure
+range of 0.33-0.50. Only one of five rounds (round 3, 0.253) dips as low as
+the top of the undefended range; the rest sit clearly inside or above the
+old 0.33-0.50 failure band. **This is not the improvement the earlier
+version of this section claimed.**
 
-**What did not fully materialize:** the weights do not show a clean
-monotonic trend toward zero across rounds (0.167 → 0.235-0.237 → 0.000/0.253
-→ 0.200-0.209 → 0.201-0.205) — there's a bump up in round 2-3 before
-settling into the 0.20-0.25 band, and only one of the two malicious clients
-was ever fully excluded, in one round. This is a real, honest limitation:
-the peer-cluster mechanism meaningfully reduces the attackers' influence
-compared to the old mechanism, but does not reliably drive it to zero or
-keep it trending down round over round on this dataset. A plausible
-technical explanation: N-BaIoT's 9 device types produce enough per-round
-variability in the adaptive clustering threshold (the round's own mean
-pairwise cosine distance) that the two malicious clients sometimes land in
-a cluster large enough to blend in, rather than being consistently isolated
-as their own outlier cluster.
+**Benign vs. malicious trust score (the control the original script never
+computed):** malicious clients' mean trust score is *higher* than benign
+clients' mean trust score in 4 of the 5 rounds (round 1 is the only
+exception: malicious 0.895 vs. benign 0.922). Round-by-round: malicious
+[0.895, 0.939, 0.918, 0.891, 0.891] vs. benign [0.922, 0.876, 0.861, 0.854,
+0.854]. This is the opposite of what a working defense should show —
+`peer_cluster_similarity` is not, on this dataset, pulling the malicious
+clients' composite trust down relative to their behavioral peers; if
+anything the malicious clients are scoring *better* than the benign
+population on average.
 
 `ton_iot_devices`'s ground-truth check (repeat of the same pattern) was not
 run — the brief marks the `nbaiot` check as the required minimum and marks
@@ -166,33 +207,74 @@ extending this task's scope.
 
 ## Overall assessment
 
+**Revised (this revision) — the original version of this section claimed a
+"real, meaningful improvement" on `nbaiot` based on a unit-mismatched
+comparison (see the correction note in Step 3). With that error fixed, the
+honest conclusion is less favorable:**
+
 - **No regression** on the two already-working, partitioned datasets
   (`unsw_nb15`, `ton_iot_network`) — both stayed strongly positive and even
-  ticked up slightly.
-- **Real, meaningful improvement** in the specific failure mode this
-  feature targeted on `nbaiot`: malicious clients' aggregation weight moved
-  from consistently *above* the undefended baseline (0.33-0.50) to mostly
-  *within or below* it (0.167-0.253, with one full exclusion), directly
-  confirmed by ground-truth `is_malicious` labels. This is the core claim
-  of the design spec — "detect the attacker even when there's nothing
-  common between the clients" — and it holds up on the dataset with the
-  clearest prior documented failure.
-- **Not a complete fix:** final-round accuracy deltas on `nbaiot` and
-  `ton_iot_devices` did not improve by that measure alone, and the
-  malicious-weight reduction on `nbaiot`, while real, is not a clean
-  monotonic trend to zero — one attacker was excluded in only one of five
-  rounds. Consistent with this project's stated goal from the outset ("you
-  can't build a perfect security system where it is guaranteed to detect
-  every single attack"), this is a genuine improvement to the specific
-  failure mode identified, not a claim of solved/perfect detection on
-  fully heterogeneous federations.
+  ticked up slightly. This part of the original assessment was correct and
+  is unchanged.
+- **On `nbaiot`, the specific failure this feature targeted is NOT clearly
+  fixed.** The correctly-computed combined malicious aggregation weight
+  this run is 0.253-0.472, versus an undefended baseline of 0.143-0.286 and
+  a prior documented (pre-feature) failure range of 0.33-0.50. Four of five
+  rounds sit inside or above the old failure band; only one round dips as
+  low as the top of the undefended range. That is not a clear reduction
+  below baseline — it is close to statistically unchanged from the
+  documented failure this feature was built to fix.
+- **Malicious clients are not scoring lower than benign clients.** Mean
+  trust score for malicious clients was *higher* than for benign clients in
+  4 of 5 rounds (malicious 0.895/0.939/0.918/0.891/0.891 vs. benign
+  0.922/0.876/0.861/0.854/0.854). `peer_cluster_similarity` is not
+  separating the two malicious clients from the benign population as
+  intended on this dataset — if anything, on average, it is doing the
+  opposite.
+- **Conclusion:** the code in `trust/peer_clustering.py` and
+  `trust/update_quality.py` works exactly as designed (unit tests pass, the
+  peer-clustering and similarity-metric mechanics behave correctly in
+  isolation), and there is no regression on the two datasets that were
+  already working. But on `nbaiot` — the dataset with the clearest prior
+  documented failure, and the one this feature was specifically built to
+  fix — this run does not show the malicious clients' combined aggregation
+  weight clearly reduced below the undefended baseline, and does not show
+  malicious clients scoring lower than benign clients on trust. **This fix
+  does not yet resolve the documented N-BaIoT failure.** A plausible
+  technical explanation, unverified: N-BaIoT's 9 device types produce
+  enough per-round variability in the adaptive clustering threshold (the
+  round's own mean pairwise cosine distance) that the two malicious clients
+  sometimes land in a cluster large enough to blend in with benign peers,
+  rather than being consistently isolated as their own outlier cluster —
+  but this is a hypothesis for follow-up work, not a claim this run
+  confirms.
 
 ## Step 5: bug findings
 
-One real bug was found and fixed (see "Bug found and fixed before the
-empirical runs" above) — a test-isolation defect in
-`tests/test_iot_datasets.py`, unrelated to the Task 1/2 feature code
-itself, but discovered while preparing this task's validation runs. No
-other bugs were found in Tasks 1-2's implementation; the `peer_clustering.py`
-and `update_quality.py` changes behaved exactly as designed across all
-four datasets and the ground-truth check.
+One real bug was found and fixed during the original validation pass (see
+"Bug found and fixed before the empirical runs" above) — a test-isolation
+defect in `tests/test_iot_datasets.py`, unrelated to the Task 1/2 feature
+code itself, but discovered while preparing this task's validation runs.
+
+A subsequent whole-branch review found two further problems, both in this
+report and its accompanying test, not in Tasks 1-2's feature code:
+
+1. **This report's original "Step 3" section compared mismatched units** —
+   a per-client aggregation weight against a combined-across-both-clients
+   baseline — producing a false "real, meaningful improvement" claim on
+   `nbaiot`, and never computed the benign-vs-malicious trust comparison at
+   all (see the correction notes in Step 3 and the rewritten Overall
+   assessment above, both now fixed).
+2. **The regression test added for the first bug
+   (`test_stub_extraction_stays_isolated_from_real_cache_dir`) was
+   vacuous** on any machine without a pre-populated real N-BaIoT cache
+   directory — it asserted `existed_before == existed_before`, a no-op, and
+   skipped its content-comparison branch entirely. Fixed to assert
+   positively that the stub extraction landed under the isolated `tmp_path`
+   cache dir, independent of whether the real cache dir happens to exist.
+
+No bugs were found in Tasks 1-2's implementation itself; the
+`peer_clustering.py` and `update_quality.py` changes behave exactly as
+designed. What the corrected `nbaiot` ground-truth check shows is that the
+mechanism, working as designed, is not yet sufficient to fix that dataset's
+documented failure — a result gap, not an implementation bug.
