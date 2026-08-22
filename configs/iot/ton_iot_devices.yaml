@@ -18,18 +18,22 @@ data:
   data_dir: "./ZT-Fedtrust Datasets"
   num_clients: 7
   batch_size: 32
-  max_rows: 5000  # per-device cap for natural-client datasets, not a dataset total (up to 7x this many rows overall)
+  max_rows: 15000  # per-device cap for natural-client datasets, not a dataset total (up to 7x this many rows overall)
   partition:
     type: "iid"
     alpha: 0.5
 
 model:
   name: "mlp"
+  hidden_sizes: [128, 64]
+
+training:
+  class_weighted_loss: true
 
 federated:
-  num_rounds: 5
-  clients_per_round: 5
-  local_epochs: 1
+  num_rounds: 20
+  clients_per_round: 7
+  local_epochs: 2
   learning_rate: 0.01
   momentum: 0.9
 
