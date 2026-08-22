@@ -12,10 +12,11 @@ per dataset.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
+import torch
 from pandas.api.types import is_numeric_dtype
 
 
@@ -114,3 +115,20 @@ def split_train_test(
         shuffled.iloc[:split_point].reset_index(drop=True),
         shuffled.iloc[split_point:].reset_index(drop=True),
     )
+
+
+def compute_class_weights(labels: Sequence[int], num_classes: int) -> torch.Tensor:
+    """Inverse-frequency class weights for `nn.CrossEntropyLoss(weight=...)`.
+
+    `weight[c] = total_samples / (num_classes * count[c])` — the standard
+    "balanced" class-weight formula, giving rarer classes a larger weight.
+    A class with zero observed samples gets weight `0.0` (there's no
+    gradient signal for it regardless; this only avoids a division by
+    zero).
+    """
+    counts = np.bincount(np.asarray(labels, dtype=np.int64), minlength=num_classes)
+    total = counts.sum()
+    weights = np.zeros(num_classes, dtype=np.float32)
+    nonzero = counts > 0
+    weights[nonzero] = total / (num_classes * counts[nonzero])
+    return torch.from_numpy(weights)

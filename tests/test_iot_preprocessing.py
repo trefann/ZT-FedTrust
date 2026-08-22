@@ -3,8 +3,10 @@
 import numpy as np
 import pandas as pd
 import pytest
+import torch
 
 from data.iot_preprocessing import (
+    compute_class_weights,
     encode_labels,
     fit_feature_encoder,
     fit_label_classes,
@@ -104,3 +106,30 @@ def test_split_train_test_respects_fraction():
     train_df, test_df = split_train_test(df, test_fraction=0.3, seed=1)
     assert len(test_df) == 30
     assert len(train_df) == 70
+
+
+def test_compute_class_weights_gives_rarer_classes_higher_weight():
+    # class 0 appears 8 times, class 1 appears 2 times, class 2 never appears
+    labels = [0] * 8 + [1] * 2
+    weights = compute_class_weights(labels, num_classes=3)
+    assert weights.shape == (3,)
+    assert weights[1] > weights[0]
+
+
+def test_compute_class_weights_zero_count_class_gets_zero_weight():
+    labels = [0, 0, 1, 1]
+    weights = compute_class_weights(labels, num_classes=3)
+    assert weights[2] == 0.0
+
+
+def test_compute_class_weights_all_one_class_does_not_crash():
+    labels = [4, 4, 4, 4]
+    weights = compute_class_weights(labels, num_classes=5)
+    assert weights.shape == (5,)
+    assert weights[4] > 0.0
+    assert torch.equal(weights[[0, 1, 2, 3]], torch.zeros(4))
+
+
+def test_compute_class_weights_is_a_float_tensor():
+    weights = compute_class_weights([0, 1, 0, 1], num_classes=2)
+    assert weights.dtype == torch.float32
