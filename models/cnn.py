@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any, Dict, Optional, Tuple
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -39,15 +41,23 @@ class SimpleCNN(nn.Module):
 _MODEL_REGISTRY = {"cnn": SimpleCNN, "mlp": TabularMLP}
 
 
-def build_model(name: str, in_channels: int, num_classes: int) -> nn.Module:
+def build_model(
+    name: str, in_channels: int, num_classes: int, hidden_sizes: Optional[Tuple[int, ...]] = None
+) -> nn.Module:
     """Factory for constructing a registered model by name.
 
     Adding a new architecture only requires implementing an `nn.Module` and
     registering it in `_MODEL_REGISTRY` — no other code needs to change.
+
+    `hidden_sizes` is forwarded only when given, so it's a no-op for models
+    (like `SimpleCNN`) that don't accept it.
     """
     if name not in _MODEL_REGISTRY:
         raise ValueError(f"Unknown model name: {name!r}. Available: {list(_MODEL_REGISTRY)}")
-    return _MODEL_REGISTRY[name](in_channels=in_channels, num_classes=num_classes)
+    kwargs: Dict[str, Any] = {"in_channels": in_channels, "num_classes": num_classes}
+    if hidden_sizes is not None:
+        kwargs["hidden_sizes"] = hidden_sizes
+    return _MODEL_REGISTRY[name](**kwargs)
 
 
 def available_models() -> list[str]:
