@@ -7,6 +7,7 @@ from unittest.mock import patch
 import numpy as np
 import pandas as pd
 import pytest
+import torch
 
 from data.iot_datasets import IOT_SUPPORTED_DATASETS, _build_natural_client_experiment, _build_partitioned_experiment, _read_family_attack_csvs, load_ciciot2023, load_iot_experiment, load_nbaiot, load_ton_iot_devices, load_ton_iot_network, load_unsw_nb15
 
@@ -91,6 +92,17 @@ class TestBuildPartitionedExperiment:
         )
         assert len(result.train_client_datasets) == 4
 
+    def test_class_weights_favor_rarer_class(self):
+        df = _make_partitioned_df()
+        result = _build_partitioned_experiment(
+            df, "label", "normal", num_clients=3, partition_type="iid",
+            dirichlet_alpha=0.5, max_rows=None, seed=42,
+        )
+        assert result.class_weights.shape == (result.num_classes,)
+        backdoor_index = result.class_names.index("backdoor")  # rarest, p=0.15
+        normal_index = result.class_names.index("normal")      # most common, p=0.60
+        assert result.class_weights[backdoor_index] > result.class_weights[normal_index]
+
 
 class TestBuildNaturalClientExperiment:
     def _device_frames(self):
@@ -138,6 +150,16 @@ class TestBuildNaturalClientExperiment:
         )
         for dataset in result.train_client_datasets.values():
             assert len(dataset) <= 10
+
+    def test_class_weights_pool_across_devices(self):
+        result = _build_natural_client_experiment(
+            self._device_frames(), label_column="type", benign_label="normal",
+            max_rows_per_device=None, seed=7,
+        )
+        assert result.class_weights.shape == (result.num_classes,)
+        normal_index = result.class_names.index("normal")  # p=0.7 on both devices, most common overall
+        ddos_index = result.class_names.index("ddos")      # only appears on device_a, rarer overall
+        assert result.class_weights[ddos_index] > result.class_weights[normal_index]
 
 
 class TestLoadCiciot2023:

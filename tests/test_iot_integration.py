@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import numpy as np
 import pytest
+import torch
 
 from data.iot_datasets import IoTExperimentData
 from data.partition import partition_iid, make_client_subsets
@@ -39,6 +40,7 @@ def _synthetic_iot_experiment_data(seed: int) -> IoTExperimentData:
         input_dim=num_features,
         num_classes=3,
         class_names=["normal", "attack_a", "attack_b"],
+        class_weights=torch.ones(3, dtype=torch.float32),
     )
 
 

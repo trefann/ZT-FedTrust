@@ -25,10 +25,12 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import pandas as pd
+import torch
 from torch.utils.data import Dataset
 
 from data.iot_preprocessing import (
     FeatureEncoder,
+    compute_class_weights,
     encode_labels,
     fit_feature_encoder,
     fit_label_classes,
@@ -52,6 +54,7 @@ class IoTExperimentData:
     input_dim: int
     num_classes: int
     class_names: List[str]
+    class_weights: torch.Tensor
 
 
 def _build_attack_pool(
@@ -96,10 +99,8 @@ def _build_partitioned_experiment(
     train_df, test_df = split_train_test(df, _TEST_FRACTION, seed)
     encoder = fit_feature_encoder(train_df[feature_columns])
 
-    train_dataset = TabularDataset(
-        encoder.transform(train_df[feature_columns]),
-        encode_labels(train_df[label_column], class_names),
-    )
+    train_labels = encode_labels(train_df[label_column], class_names)
+    train_dataset = TabularDataset(encoder.transform(train_df[feature_columns]), train_labels)
     test_dataset = TabularDataset(
         encoder.transform(test_df[feature_columns]),
         encode_labels(test_df[label_column], class_names),
@@ -117,6 +118,8 @@ def _build_partitioned_experiment(
         train_df, feature_columns, label_column, encoder, class_names, benign_label
     )
 
+    class_weights = compute_class_weights(train_labels, num_classes=len(class_names))
+
     return IoTExperimentData(
         train_client_datasets=train_client_datasets,
         test_dataset=test_dataset,
@@ -124,6 +127,7 @@ def _build_partitioned_experiment(
         input_dim=encoder.input_dim,
         num_classes=len(class_names),
         class_names=class_names,
+        class_weights=class_weights,
     )
 
 
@@ -152,6 +156,8 @@ def _build_natural_client_experiment(
         test_parts[name] = test_df
 
     pooled_train = pd.concat(train_parts.values(), ignore_index=True)
+    pooled_train_labels = encode_labels(pooled_train[label_column], class_names)
+    class_weights = compute_class_weights(pooled_train_labels, num_classes=len(class_names))
     encoder = fit_feature_encoder(pooled_train[feature_columns])
 
     train_client_datasets: Dict[int, Dataset] = {}
@@ -177,6 +183,7 @@ def _build_natural_client_experiment(
         input_dim=encoder.input_dim,
         num_classes=len(class_names),
         class_names=class_names,
+        class_weights=class_weights,
     )
 
 

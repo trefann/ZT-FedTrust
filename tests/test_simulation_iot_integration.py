@@ -37,6 +37,7 @@ def _fake_experiment_data() -> IoTExperimentData:
         input_dim=5,
         num_classes=3,
         class_names=["a", "b", "c"],
+        class_weights=torch.ones(3, dtype=torch.float32),
     )
 
 

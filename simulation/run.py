@@ -71,6 +71,14 @@ class DataConfig:
 @dataclass
 class ModelConfig:
     name: str
+    hidden_sizes: Optional[Tuple[int, ...]] = None
+
+
+@dataclass
+class TrainingConfig:
+    """Training-recipe knobs orthogonal to the federated schedule in `FederatedConfig`."""
+
+    class_weighted_loss: bool = False
 
 
 @dataclass
@@ -188,11 +196,12 @@ class SimulationConfig:
     federated: FederatedConfig
     logging: LoggingConfig
     # Defaulted so existing call sites (and configs without a `trust:`/
-    # `aggregation:`/`attacks:` block) keep working unmodified — all three
-    # are additive.
+    # `aggregation:`/`attacks:`/`training:` block) keep working unmodified —
+    # all four are additive.
     trust: TrustConfig = field(default_factory=TrustConfig)
     aggregation: AggregationConfig = field(default_factory=AggregationConfig)
     attacks: AttackConfig = field(default_factory=AttackConfig)
+    training: TrainingConfig = field(default_factory=TrainingConfig)
 
 
 def validate_config(config: SimulationConfig) -> None:
@@ -228,6 +237,8 @@ def validate_config(config: SimulationConfig) -> None:
     available = available_models()
     if config.model.name not in available:
         errors.append(f"model.name must be one of {available}, got {config.model.name!r}")
+    if config.model.hidden_sizes is not None and any(size <= 0 for size in config.model.hidden_sizes):
+        errors.append(f"model.hidden_sizes values must all be > 0, got {config.model.hidden_sizes}")
 
     if config.federated.num_rounds <= 0:
         errors.append(f"federated.num_rounds must be > 0, got {config.federated.num_rounds}")
@@ -360,7 +371,10 @@ def load_config(config_path: str) -> SimulationConfig:
             batch_size=data_raw["batch_size"],
             max_rows=data_raw.get("max_rows"),
         ),
-        model=ModelConfig(name=raw["model"]["name"]),
+        model=ModelConfig(
+            name=raw["model"]["name"],
+            hidden_sizes=tuple(raw["model"]["hidden_sizes"]) if "hidden_sizes" in raw["model"] else None,
+        ),
         federated=FederatedConfig(
             num_rounds=raw["federated"]["num_rounds"],
             clients_per_round=raw["federated"]["clients_per_round"],
@@ -417,6 +431,9 @@ def load_config(config_path: str) -> SimulationConfig:
                 enabled=real_traffic_raw.get("enabled", False),
                 probability=real_traffic_raw.get("probability", 1.0),
             ),
+        ),
+        training=TrainingConfig(
+            class_weighted_loss=raw.get("training", {}).get("class_weighted_loss", False),
         ),
     )
     validate_config(config)
@@ -532,7 +549,13 @@ def load_experiment_data(
             dirichlet_alpha=config.data.dirichlet_alpha,
             seed=config.seed,
         )
-        global_model = build_model(config.model.name, experiment_data.input_dim, experiment_data.num_classes)
+        global_model = build_model(
+            config.model.name,
+            experiment_data.input_dim,
+            experiment_data.num_classes,
+            hidden_sizes=config.model.hidden_sizes,
+        )
+        class_weights = experiment_data.class_weights if config.training.class_weighted_loss else None
         clients = {
             client_id: Client(
                 client_id=client_id,
@@ -543,6 +566,7 @@ def load_experiment_data(
                 learning_rate=config.federated.learning_rate,
                 momentum=config.federated.momentum,
                 local_epochs=config.federated.local_epochs,
+                class_weights=class_weights,
             )
             for client_id, dataset in experiment_data.train_client_datasets.items()
         }
