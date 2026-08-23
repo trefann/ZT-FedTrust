@@ -26,15 +26,15 @@ data:
 
 model:
   name: "mlp"
-  hidden_sizes: [128, 64]
+  hidden_sizes: [256, 128]
 
 training:
   class_weighted_loss: true
 
 federated:
-  num_rounds: 20
+  num_rounds: 50
   clients_per_round: 9
-  local_epochs: 2
+  local_epochs: 5
   learning_rate: 0.01
   momentum: 0.9
 
