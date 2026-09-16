@@ -66,6 +66,7 @@ class DataConfig:
     dirichlet_alpha: float
     batch_size: int
     max_rows: Optional[int] = None
+    binary_labels: bool = False
 
 
 @dataclass
@@ -370,6 +371,7 @@ def load_config(config_path: str) -> SimulationConfig:
             dirichlet_alpha=partition_raw.get("alpha", 0.5),
             batch_size=data_raw["batch_size"],
             max_rows=data_raw.get("max_rows"),
+            binary_labels=data_raw.get("binary_labels", False),
         ),
         model=ModelConfig(
             name=raw["model"]["name"],
@@ -548,6 +550,7 @@ def load_experiment_data(
             partition_type=config.data.partition_type,
             dirichlet_alpha=config.data.dirichlet_alpha,
             seed=config.seed,
+            binary_labels=config.data.binary_labels,
         )
         global_model = build_model(
             config.model.name,

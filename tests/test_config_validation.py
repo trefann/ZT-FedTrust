@@ -131,3 +131,8 @@ def test_negative_hidden_size_raises():
     config.model.hidden_sizes = (128, -1)
     with pytest.raises(ValueError):
         validate_config(config)
+
+
+def test_data_binary_labels_defaults_to_false():
+    config = _base_config()
+    assert config.data.binary_labels is False

@@ -103,6 +103,23 @@ class TestBuildPartitionedExperiment:
         normal_index = result.class_names.index("normal")      # most common, p=0.60
         assert result.class_weights[backdoor_index] > result.class_weights[normal_index]
 
+    def test_binary_labels_collapses_to_benign_and_attack(self):
+        df = _make_partitioned_df()
+        result = _build_partitioned_experiment(
+            df, "label", "normal", num_clients=3, partition_type="iid",
+            dirichlet_alpha=0.5, max_rows=None, seed=42, binary_labels=True,
+        )
+        assert result.class_names == ["attack", "benign"]
+        assert result.num_classes == 2
+
+    def test_binary_labels_with_no_benign_label_raises(self):
+        df = _make_partitioned_df()
+        with pytest.raises(ValueError):
+            _build_partitioned_experiment(
+                df, "label", None, num_clients=3, partition_type="iid",
+                dirichlet_alpha=0.5, max_rows=None, seed=42, binary_labels=True,
+            )
+
 
 class TestBuildNaturalClientExperiment:
     def _device_frames(self):
@@ -160,6 +177,21 @@ class TestBuildNaturalClientExperiment:
         normal_index = result.class_names.index("normal")  # p=0.7 on both devices, most common overall
         ddos_index = result.class_names.index("ddos")      # only appears on device_a, rarer overall
         assert result.class_weights[ddos_index] > result.class_weights[normal_index]
+
+    def test_binary_labels_collapses_to_benign_and_attack(self):
+        result = _build_natural_client_experiment(
+            self._device_frames(), label_column="type", benign_label="normal",
+            max_rows_per_device=None, seed=7, binary_labels=True,
+        )
+        assert result.class_names == ["attack", "benign"]
+        assert result.num_classes == 2
+
+    def test_binary_labels_with_no_benign_label_raises(self):
+        with pytest.raises(ValueError):
+            _build_natural_client_experiment(
+                self._device_frames(), label_column="type", benign_label=None,
+                max_rows_per_device=None, seed=7, binary_labels=True,
+            )
 
 
 class TestLoadCiciot2023:
