@@ -373,6 +373,21 @@ class TestLoadNbaiot:
             ("Danmini_Doorbell", "Ecobee_Thermostat"),
         )
 
+    # `_load_nbaiot_device_dataframe` extracts .rar archives into
+    # `_NBAIOT_CACHE_DIR`, a hardcoded relative path that (outside of tests)
+    # points at the real `data_cache/iot/nbaiot` used by actual experiment
+    # runs. Without this, tests in this class that patch `extract_rar` with
+    # a fake writing stub fixture CSVs would write those stubs straight into
+    # that real, shared cache directory — permanently corrupting it for any
+    # later real N-BaIoT run (see regression test below). Every test here
+    # therefore gets its own throwaway cache dir.
+    @pytest.fixture(autouse=True)
+    def _isolated_cache_dir(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(
+            "data.iot_datasets._NBAIOT_CACHE_DIR",
+            str(tmp_path / "nbaiot_cache"),
+        )
+
     def _write_fixture(self, tmp_path):
         import zipfile
 
@@ -422,6 +437,53 @@ class TestLoadNbaiot:
         with patch("data.iot_datasets.extract_rar", side_effect=fake_extract_rar):
             with pytest.raises(KeyError):
                 load_nbaiot(str(data_dir), max_rows_per_device=None, seed=1)
+
+    def test_stub_extraction_stays_isolated_from_real_cache_dir(self, tmp_path):
+        """Regression test: tests in this class patch `extract_rar` with a
+        fake that writes tiny 2-column stub CSVs. Before `_isolated_cache_dir`
+        existed, those stubs were written into the module's real, hardcoded
+        `_NBAIOT_CACHE_DIR` ("data_cache/iot/nbaiot") because nothing
+        redirected it, silently overwriting the real, previously-extracted
+        N-BaIoT gafgyt attack data for Danmini_Doorbell/Ecobee_Thermostat
+        with stub content — which then made real (non-test) N-BaIoT runs
+        crash with `KeyError: "['f1', 'f2'] not in index"` the next time
+        anyone ran the actual experiment, since the corrupted cache short-
+        circuited the real `.rar` extraction.
+
+        This must positively confirm the fixture *actually redirects*
+        extraction to the isolated `tmp_path` cache dir, not just that the
+        real cache dir was untouched — on a fresh clone/CI runner that never
+        populated `data_cache/iot/nbaiot`, "untouched" is true vacuously
+        regardless of whether redirection works at all.
+        """
+        data_dir = self._write_fixture(tmp_path)
+        isolated_cache_dir = tmp_path / "nbaiot_cache"  # matches `_isolated_cache_dir`'s monkeypatch
+        real_cache_dir = Path("data_cache/iot/nbaiot")
+        isolated_marker_path = isolated_cache_dir / "Danmini_Doorbell" / "gafgyt" / "combo.csv"
+        real_marker_path = real_cache_dir / "Danmini_Doorbell" / "gafgyt" / "combo.csv"
+        real_existed_before = real_marker_path.exists()
+        real_contents_before = real_marker_path.read_bytes() if real_existed_before else None
+
+        def fake_extract_rar(archive_path, dest_dir):
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            (dest_dir / "combo.csv").write_text("f1,f2\n9.0,9.1\n9.2,9.3\n", encoding="utf-8")
+
+        with patch("data.iot_datasets.extract_rar", side_effect=fake_extract_rar):
+            load_nbaiot(str(data_dir), max_rows_per_device=None, seed=1)
+
+        # Positive: the stub extraction actually landed under the isolated
+        # cache dir the fixture redirected to. (Read as text: `write_text`
+        # translates "\n" to the platform line separator, e.g. "\r\n" on
+        # Windows, so a raw bytes comparison would be platform-dependent.)
+        assert isolated_marker_path.exists()
+        assert isolated_marker_path.read_text(encoding="utf-8") == "f1,f2\n9.0,9.1\n9.2,9.3\n"
+
+        # Negative: the real cache dir was never touched at all (absolute
+        # claim, not conditioned on pre-existing state, since with the
+        # isolation fixture active writes should never go there).
+        assert real_marker_path.exists() == real_existed_before
+        if real_existed_before:
+            assert real_marker_path.read_bytes() == real_contents_before
 
 
 class TestLoadIotExperimentDispatch:
