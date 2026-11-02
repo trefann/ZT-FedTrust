@@ -154,17 +154,48 @@ ton_iot_network (binary) baseline: accuracy=97.63%
 
 **TON_IoT devices improves substantially (+21.23pts) but remains well short of 90%.** This is consistent with everything already known about this specific dataset from the multi-class tuning work: its 4-attempt tuning sequence was flat/noisy regardless of budget (41.76% → 39.13% → 39.02% → 41.96%), the `real_traffic` attack causes severe damage under `fedavg_attack` (24.73%), and the Zero Trust defense makes it actively worse under `ztfedtrust_attack` (14.31%) due to trust-based selection over-excluding clients on this small 7-device federation. Binary framing helps — the classification task itself was part of the problem — but something else specific to this dataset (federation size, feature quality from the zero-padded union schema across heterogeneous device types, or the attack's disproportionate impact on a small federation) is still capping it well below the other three datasets' binary results. This is a genuine, honest limitation, not something more label-simplification is expected to fix.
 
+## Addendum: results measured after this report was first written
+
+Added 2026-11-02. The scripts and logs below were found uncommitted in the working tree and are now preserved in `artifacts/2026-09-16-binary-label-scratch/` (see its README). Their file timestamps (2026-09-16, 08:49–09:45) fall after this report's last commit (08:47), and their contents had not been recorded here. Numbers are copied from the logs; nothing was re-run for this addendum.
+
+### N-BaIoT and TON_IoT network: the remaining two scenarios
+
+`verify_nbaiot_tonnet_binary.py` ran all three scenarios on the committed `nbaiot_binary.yaml` and `ton_iot_network_binary.yaml` (raw output: `nbaiot_tonnet_binary_verify.log`).
+
+| Dataset (binary) | `baseline` | `fedavg_attack` | `ztfedtrust_attack` |
+|---|---|---|---|
+| N-BaIoT | 99.89% | 99.92% | 99.73% |
+| TON_IoT network | 97.63% | 97.63% | 97.70% |
+
+All six clear 90%. As with UNSW-NB15, there is no meaningful defended-vs-undefended gap: N-BaIoT `ztfedtrust_attack` is 0.19pt below `fedavg_attack`, and TON_IoT network's three scenarios span 0.07pt. These tasks may simply be too close to saturated for accuracy to reveal a defense effect, but that is an interpretation this data does not test.
+
+### TON_IoT devices: further tuning attempts (none beat 62.99%)
+
+`tune_ton_iot_devices_binary_attempt.py` produced these `baseline` results. The settings were applied by temporarily editing the config, so they are not reproducible from the committed `ton_iot_devices_binary.yaml` alone.
+
+| Settings | `baseline` accuracy |
+|---|---|
+| rounds=20, epochs=5, hidden=128-64 | 61.50% |
+| rounds=50, epochs=5, hidden=128-64 | 59.79% |
+| rounds=20, epochs=2, hidden=128-64, max_rows=40000 | 59.56% |
+
+### TON_IoT devices: class balance
+
+`diagnose_ton_iot_devices.py` (full, uncapped data) shows exactly 15,000 `normal` rows on every device, with attack share ranging from 51.8% (modbus) to 62.4% (fridge). Across the 7 devices that is 156,119 attack rows of 261,119 total, or 59.8%.
+
+By that arithmetic, a classifier that always predicted "attack" would score about 59.8% on a pooled random test split (assuming the `max_rows` subsample preserves class proportions, which was not checked). The 62.99% result and the three attempts above all sit within about 3 points of that figure. This suggests the model may be learning little beyond the class prior on this dataset, but that is not confirmed: no per-class precision/recall breakdown was run.
+
 ## Conclusion
 
 Binary reformulation directly and substantially validates the hypothesis it was designed to test: this project's accuracy ceiling was driven primarily by multi-class attack-subtype classification difficulty, not by training budget, model capacity, or an inherent limit of the federated learning pipeline. **Three of four datasets now clear the 90% target on all three experiment scenarios (`baseline`/`fedavg_attack`/`ztfedtrust_attack`):**
 
 | Dataset | Binary accuracy (all 3 scenarios) | Clears 90%? |
 |---|---|---|
-| N-BaIoT | 99.89% (baseline only measured; not yet run for the other two scenarios) | Yes |
-| TON_IoT network | 97.63% (baseline only measured; not yet run for the other two scenarios) | Yes |
+| N-BaIoT | 99.89% / 99.92% / 99.73% (all 3 scenarios verified; see addendum) | Yes |
+| TON_IoT network | 97.63% / 97.63% / 97.70% (all 3 scenarios verified; see addendum) | Yes |
 | UNSW-NB15 | 90.00% / 90.37% / 90.33% (all 3 scenarios verified) | Yes |
 | TON_IoT devices | 62.99% (baseline only) | No |
 
 This is a dramatic change from the multi-class ceiling, where none of the four datasets, across any scenario, ever exceeded 74%. **TON_IoT devices remains the sole exception**: substantially improved (41.76% → 62.99%) but still well below target, with a distinct, already-documented set of problems (severe attack damage, defense over-exclusion, a small and structurally unusual federation) that binary framing alone does not resolve.
 
-Note: N-BaIoT's and TON_IoT network's `fedavg_attack`/`ztfedtrust_attack` scenarios have not yet been measured in binary mode (only `baseline`, as originally scoped) — only UNSW-NB15's full three-scenario picture was completed as part of pushing it past 90%. Measuring the other two datasets' remaining scenarios would be a natural, low-cost follow-up given how strong their `baseline` results already are.
+Note: an earlier version of this report said N-BaIoT's and TON_IoT network's `fedavg_attack`/`ztfedtrust_attack` scenarios had not been measured in binary mode. They had been — the results were sitting in an uncommitted log and are recorded in the addendum above. TON_IoT devices is still `baseline`-only.
