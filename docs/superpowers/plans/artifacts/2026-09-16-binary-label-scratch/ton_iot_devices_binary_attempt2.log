@@ -1,0 +1,2 @@
+ton_iot_devices (binary) baseline attempt2(rounds=20,epochs=5,hidden=128-64): accuracy=61.50%
+exit:0

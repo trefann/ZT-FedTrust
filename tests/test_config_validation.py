@@ -114,3 +114,25 @@ def test_real_traffic_invalid_probability_raises_value_error():
     config.attacks.real_traffic.probability = 1.5
     with pytest.raises(ValueError):
         validate_config(config)
+
+
+def test_model_hidden_sizes_defaults_to_none():
+    config = _base_config()
+    assert config.model.hidden_sizes is None
+
+
+def test_training_class_weighted_loss_defaults_to_false():
+    config = _base_config()
+    assert config.training.class_weighted_loss is False
+
+
+def test_negative_hidden_size_raises():
+    config = _base_config()
+    config.model.hidden_sizes = (128, -1)
+    with pytest.raises(ValueError):
+        validate_config(config)
+
+
+def test_data_binary_labels_defaults_to_false():
+    config = _base_config()
+    assert config.data.binary_labels is False

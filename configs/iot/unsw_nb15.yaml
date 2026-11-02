@@ -12,18 +12,22 @@ data:
   data_dir: "./ZT-Fedtrust Datasets"
   num_clients: 10
   batch_size: 32
-  max_rows: 5000
+  max_rows: 15000
   partition:
     type: "dirichlet"
     alpha: 0.5
 
 model:
   name: "mlp"
+  hidden_sizes: [256, 128]
+
+training:
+  class_weighted_loss: true
 
 federated:
-  num_rounds: 5
-  clients_per_round: 6
-  local_epochs: 1
+  num_rounds: 50
+  clients_per_round: 10
+  local_epochs: 5
   learning_rate: 0.01
   momentum: 0.9
 

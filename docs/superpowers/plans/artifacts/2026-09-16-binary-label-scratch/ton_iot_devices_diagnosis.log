@@ -1,0 +1,8 @@
+fridge: total_rows=39944 normal=15000 attack=24944 attack_pct=62.4%
+garage_door: total_rows=39587 normal=15000 attack=24587 attack_pct=62.1%
+gps_tracker: total_rows=38960 normal=15000 attack=23960 attack_pct=61.5%
+modbus: total_rows=31106 normal=15000 attack=16106 attack_pct=51.8%
+motion_light: total_rows=39488 normal=15000 attack=24488 attack_pct=62.0%
+thermostat: total_rows=32774 normal=15000 attack=17774 attack_pct=54.2%
+weather: total_rows=39260 normal=15000 attack=24260 attack_pct=61.8%
+exit:0

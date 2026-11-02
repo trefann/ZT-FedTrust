@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import torch
 import torch.nn as nn
@@ -45,6 +45,7 @@ class Client:
         learning_rate: float = 0.01,
         momentum: float = 0.9,
         local_epochs: int = 1,
+        class_weights: Optional[torch.Tensor] = None,
     ) -> None:
         self.client_id = client_id
         self.dataset = dataset
@@ -53,6 +54,7 @@ class Client:
         self.learning_rate = learning_rate
         self.momentum = momentum
         self.local_epochs = local_epochs
+        self.class_weights = class_weights
         self.model = copy.deepcopy(model_template).to(device)
         self._logger = logging.getLogger(__name__)
 
@@ -94,7 +96,9 @@ class Client:
         optimizer = torch.optim.SGD(
             self.model.parameters(), lr=self.learning_rate, momentum=self.momentum
         )
-        criterion = nn.CrossEntropyLoss()
+        criterion = nn.CrossEntropyLoss(
+            weight=self.class_weights.to(self.device) if self.class_weights is not None else None
+        )
 
         total_loss = 0.0
         total_batches = 0

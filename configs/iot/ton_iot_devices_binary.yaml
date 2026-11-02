@@ -1,0 +1,84 @@
+# TON_IoT device telemetry, binary (benign vs. attack) classification. A
+# sibling of ton_iot_devices.yaml that collapses the multi-class attack-type
+# vocabulary down to two classes, at the ORIGINAL (pre-tuning) training
+# budget — see docs/superpowers/specs/2026-09-16-binary-label-classification-design.md.
+#
+# num_clients: 7 is not a partitioning knob here (natural-client datasets
+# ignore it) — it exists only so federated.clients_per_round's upper-bound
+# validation matches the real device count.
+#
+# Usage:
+#   python simulation/run.py --config configs/iot/ton_iot_devices_binary.yaml --experiment compare_all
+
+seed: 42
+device: "cpu"
+
+data:
+  dataset: "ton_iot_devices"
+  data_dir: "./ZT-Fedtrust Datasets"
+  num_clients: 7
+  batch_size: 32
+  max_rows: 15000  # per-device cap for natural-client datasets, not a dataset total (up to 7x this many rows overall)
+  binary_labels: true
+  partition:
+    type: "iid"
+    alpha: 0.5
+
+model:
+  name: "mlp"
+  hidden_sizes: [128, 64]
+
+training:
+  class_weighted_loss: true
+
+federated:
+  num_rounds: 20
+  clients_per_round: 7
+  local_epochs: 2
+  learning_rate: 0.01
+  momentum: 0.9
+
+logging:
+  log_dir: "./results/iot_ton_iot_devices_binary/logs"
+  log_level: "INFO"
+  results_dir: "./results/iot_ton_iot_devices_binary"
+
+trust:
+  enabled: true
+  initial_reputation: 0.80
+  reputation_alpha: 0.80
+  threshold_mode: adaptive
+  threshold: 0.60
+  participation_fraction: 0.70
+  weights:
+    identity: 0.25
+    integrity: 0.20
+    behaviour: 0.20
+    reputation: 0.15
+    update_quality: 0.20
+
+aggregation:
+  strategy: trust_fedavg
+
+attacks:
+  enabled: true
+  malicious_client_fraction: 0.20
+  active_attack: real_traffic
+  label_flipping:
+    enabled: false
+    probability: 1.0
+  model_poisoning:
+    enabled: false
+    probability: 1.0
+    scale_factor: 5.0
+  byzantine:
+    enabled: false
+    probability: 1.0
+    strategy: negate
+  sybil:
+    enabled: false
+    number_of_identities: 3
+    probability: 1.0
+  real_traffic:
+    enabled: true
+    probability: 1.0

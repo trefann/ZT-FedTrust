@@ -1,0 +1,459 @@
+D:\ZT-FedTrust\.claude\worktrees\iot-accuracy-tuning\data\iot_datasets.py:415: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  benign_df["label"] = "benign"
+D:\ZT-FedTrust\.claude\worktrees\iot-accuracy-tuning\data\iot_datasets.py:403: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  part["label"] = f"{family}_{csv_path.stem}"
+nbaiot (binary) baseline: accuracy=99.89%
+D:\ZT-FedTrust\.claude\worktrees\iot-accuracy-tuning\data\iot_datasets.py:415: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  benign_df["label"] = "benign"
+D:\ZT-FedTrust\.claude\worktrees\iot-accuracy-tuning\data\iot_datasets.py:403: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  part["label"] = f"{family}_{csv_path.stem}"
+nbaiot (binary) fedavg_attack: accuracy=99.92%
+D:\ZT-FedTrust\.claude\worktrees\iot-accuracy-tuning\data\iot_datasets.py:415: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  benign_df["label"] = "benign"
+D:\ZT-FedTrust\.claude\worktrees\iot-accuracy-tuning\data\iot_datasets.py:403: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  part["label"] = f"{family}_{csv_path.stem}"
+----------------------------------------
+Round 1
+Threshold: 1.00
+Clients Available: 9
+Eligible: 9
+Selected: 6
+Rejected: 0
+Average Trust: 1.00
+Aggregation: TrustFedAvg
+Global Accuracy: 93.4%
+----------------------------------------
+----------------------------------------
+Round 2
+Threshold: 0.89
+Clients Available: 9
+Eligible: 7
+Selected: 5
+Rejected: 2
+Average Trust: 0.92
+Aggregation: TrustFedAvg
+Global Accuracy: 99.8%
+----------------------------------------
+----------------------------------------
+Round 3
+Threshold: 0.86
+Clients Available: 9
+Eligible: 5
+Selected: 4
+Rejected: 4
+Average Trust: 0.89
+Aggregation: TrustFedAvg
+Global Accuracy: 99.8%
+----------------------------------------
+----------------------------------------
+Round 4
+Threshold: 0.84
+Clients Available: 9
+Eligible: 5
+Selected: 4
+Rejected: 4
+Average Trust: 0.86
+Aggregation: TrustFedAvg
+Global Accuracy: 99.9%
+----------------------------------------
+----------------------------------------
+Round 5
+Threshold: 0.84
+Clients Available: 9
+Eligible: 5
+Selected: 4
+Rejected: 4
+Average Trust: 0.86
+Aggregation: TrustFedAvg
+Global Accuracy: 99.8%
+----------------------------------------
+----------------------------------------
+Round 6
+Threshold: 0.84
+Clients Available: 9
+Eligible: 4
+Selected: 3
+Rejected: 5
+Average Trust: 0.86
+Aggregation: TrustFedAvg
+Global Accuracy: 99.8%
+----------------------------------------
+----------------------------------------
+Round 7
+Threshold: 0.83
+Clients Available: 9
+Eligible: 5
+Selected: 4
+Rejected: 4
+Average Trust: 0.85
+Aggregation: TrustFedAvg
+Global Accuracy: 99.9%
+----------------------------------------
+----------------------------------------
+Round 8
+Threshold: 0.83
+Clients Available: 9
+Eligible: 4
+Selected: 3
+Rejected: 5
+Average Trust: 0.85
+Aggregation: TrustFedAvg
+Global Accuracy: 99.7%
+----------------------------------------
+----------------------------------------
+Round 9
+Threshold: 0.83
+Clients Available: 9
+Eligible: 4
+Selected: 3
+Rejected: 5
+Average Trust: 0.84
+Aggregation: TrustFedAvg
+Global Accuracy: 99.7%
+----------------------------------------
+----------------------------------------
+Round 10
+Threshold: 0.83
+Clients Available: 9
+Eligible: 4
+Selected: 3
+Rejected: 5
+Average Trust: 0.84
+Aggregation: TrustFedAvg
+Global Accuracy: 99.5%
+----------------------------------------
+----------------------------------------
+Round 11
+Threshold: 0.83
+Clients Available: 9
+Eligible: 4
+Selected: 3
+Rejected: 5
+Average Trust: 0.84
+Aggregation: TrustFedAvg
+Global Accuracy: 99.9%
+----------------------------------------
+----------------------------------------
+Round 12
+Threshold: 0.83
+Clients Available: 9
+Eligible: 4
+Selected: 3
+Rejected: 5
+Average Trust: 0.85
+Aggregation: TrustFedAvg
+Global Accuracy: 99.8%
+----------------------------------------
+----------------------------------------
+Round 13
+Threshold: 0.83
+Clients Available: 9
+Eligible: 4
+Selected: 3
+Rejected: 5
+Average Trust: 0.85
+Aggregation: TrustFedAvg
+Global Accuracy: 99.7%
+----------------------------------------
+----------------------------------------
+Round 14
+Threshold: 0.83
+Clients Available: 9
+Eligible: 4
+Selected: 3
+Rejected: 5
+Average Trust: 0.84
+Aggregation: TrustFedAvg
+Global Accuracy: 99.8%
+----------------------------------------
+----------------------------------------
+Round 15
+Threshold: 0.83
+Clients Available: 9
+Eligible: 4
+Selected: 3
+Rejected: 5
+Average Trust: 0.84
+Aggregation: TrustFedAvg
+Global Accuracy: 99.8%
+----------------------------------------
+----------------------------------------
+Round 16
+Threshold: 0.83
+Clients Available: 9
+Eligible: 4
+Selected: 3
+Rejected: 5
+Average Trust: 0.85
+Aggregation: TrustFedAvg
+Global Accuracy: 99.9%
+----------------------------------------
+----------------------------------------
+Round 17
+Threshold: 0.83
+Clients Available: 9
+Eligible: 5
+Selected: 4
+Rejected: 4
+Average Trust: 0.84
+Aggregation: TrustFedAvg
+Global Accuracy: 94.1%
+----------------------------------------
+----------------------------------------
+Round 18
+Threshold: 0.84
+Clients Available: 9
+Eligible: 5
+Selected: 4
+Rejected: 4
+Average Trust: 0.85
+Aggregation: TrustFedAvg
+Global Accuracy: 99.8%
+----------------------------------------
+----------------------------------------
+Round 19
+Threshold: 0.83
+Clients Available: 9
+Eligible: 4
+Selected: 3
+Rejected: 5
+Average Trust: 0.86
+Aggregation: TrustFedAvg
+Global Accuracy: 99.8%
+----------------------------------------
+----------------------------------------
+Round 20
+Threshold: 0.83
+Clients Available: 9
+Eligible: 4
+Selected: 3
+Rejected: 5
+Average Trust: 0.84
+Aggregation: TrustFedAvg
+Global Accuracy: 99.7%
+----------------------------------------
+nbaiot (binary) ztfedtrust_attack: accuracy=99.73%
+ton_iot_network (binary) baseline: accuracy=97.63%
+ton_iot_network (binary) fedavg_attack: accuracy=97.63%
+----------------------------------------
+Round 1
+Threshold: 1.00
+Clients Available: 10
+Eligible: 10
+Selected: 7
+Rejected: 0
+Average Trust: 1.00
+Aggregation: TrustFedAvg
+Global Accuracy: 88.7%
+----------------------------------------
+----------------------------------------
+Round 2
+Threshold: 0.87
+Clients Available: 10
+Eligible: 6
+Selected: 4
+Rejected: 4
+Average Trust: 0.90
+Aggregation: TrustFedAvg
+Global Accuracy: 94.3%
+----------------------------------------
+----------------------------------------
+Round 3
+Threshold: 0.86
+Clients Available: 10
+Eligible: 6
+Selected: 4
+Rejected: 4
+Average Trust: 0.88
+Aggregation: TrustFedAvg
+Global Accuracy: 96.5%
+----------------------------------------
+----------------------------------------
+Round 4
+Threshold: 0.85
+Clients Available: 10
+Eligible: 6
+Selected: 4
+Rejected: 4
+Average Trust: 0.87
+Aggregation: TrustFedAvg
+Global Accuracy: 91.9%
+----------------------------------------
+----------------------------------------
+Round 5
+Threshold: 0.85
+Clients Available: 10
+Eligible: 5
+Selected: 4
+Rejected: 5
+Average Trust: 0.87
+Aggregation: TrustFedAvg
+Global Accuracy: 95.7%
+----------------------------------------
+----------------------------------------
+Round 6
+Threshold: 0.85
+Clients Available: 10
+Eligible: 5
+Selected: 4
+Rejected: 5
+Average Trust: 0.87
+Aggregation: TrustFedAvg
+Global Accuracy: 96.9%
+----------------------------------------
+----------------------------------------
+Round 7
+Threshold: 0.84
+Clients Available: 10
+Eligible: 5
+Selected: 4
+Rejected: 5
+Average Trust: 0.86
+Aggregation: TrustFedAvg
+Global Accuracy: 97.5%
+----------------------------------------
+----------------------------------------
+Round 8
+Threshold: 0.85
+Clients Available: 10
+Eligible: 5
+Selected: 4
+Rejected: 5
+Average Trust: 0.86
+Aggregation: TrustFedAvg
+Global Accuracy: 96.0%
+----------------------------------------
+----------------------------------------
+Round 9
+Threshold: 0.85
+Clients Available: 10
+Eligible: 5
+Selected: 4
+Rejected: 5
+Average Trust: 0.86
+Aggregation: TrustFedAvg
+Global Accuracy: 97.0%
+----------------------------------------
+----------------------------------------
+Round 10
+Threshold: 0.84
+Clients Available: 10
+Eligible: 5
+Selected: 4
+Rejected: 5
+Average Trust: 0.86
+Aggregation: TrustFedAvg
+Global Accuracy: 97.5%
+----------------------------------------
+----------------------------------------
+Round 11
+Threshold: 0.85
+Clients Available: 10
+Eligible: 5
+Selected: 4
+Rejected: 5
+Average Trust: 0.86
+Aggregation: TrustFedAvg
+Global Accuracy: 94.3%
+----------------------------------------
+----------------------------------------
+Round 12
+Threshold: 0.84
+Clients Available: 10
+Eligible: 5
+Selected: 4
+Rejected: 5
+Average Trust: 0.86
+Aggregation: TrustFedAvg
+Global Accuracy: 97.6%
+----------------------------------------
+----------------------------------------
+Round 13
+Threshold: 0.84
+Clients Available: 10
+Eligible: 5
+Selected: 4
+Rejected: 5
+Average Trust: 0.86
+Aggregation: TrustFedAvg
+Global Accuracy: 97.5%
+----------------------------------------
+----------------------------------------
+Round 14
+Threshold: 0.84
+Clients Available: 10
+Eligible: 5
+Selected: 4
+Rejected: 5
+Average Trust: 0.86
+Aggregation: TrustFedAvg
+Global Accuracy: 97.6%
+----------------------------------------
+----------------------------------------
+Round 15
+Threshold: 0.85
+Clients Available: 10
+Eligible: 5
+Selected: 4
+Rejected: 5
+Average Trust: 0.86
+Aggregation: TrustFedAvg
+Global Accuracy: 94.6%
+----------------------------------------
+----------------------------------------
+Round 16
+Threshold: 0.83
+Clients Available: 10
+Eligible: 7
+Selected: 5
+Rejected: 3
+Average Trust: 0.85
+Aggregation: TrustFedAvg
+Global Accuracy: 95.9%
+----------------------------------------
+----------------------------------------
+Round 17
+Threshold: 0.84
+Clients Available: 10
+Eligible: 6
+Selected: 4
+Rejected: 4
+Average Trust: 0.86
+Aggregation: TrustFedAvg
+Global Accuracy: 97.6%
+----------------------------------------
+----------------------------------------
+Round 18
+Threshold: 0.84
+Clients Available: 10
+Eligible: 6
+Selected: 4
+Rejected: 4
+Average Trust: 0.85
+Aggregation: TrustFedAvg
+Global Accuracy: 97.8%
+----------------------------------------
+----------------------------------------
+Round 19
+Threshold: 0.84
+Clients Available: 10
+Eligible: 6
+Selected: 4
+Rejected: 4
+Average Trust: 0.86
+Aggregation: TrustFedAvg
+Global Accuracy: 97.6%
+----------------------------------------
+----------------------------------------
+Round 20
+Threshold: 0.84
+Clients Available: 10
+Eligible: 6
+Selected: 4
+Rejected: 4
+Average Trust: 0.85
+Aggregation: TrustFedAvg
+Global Accuracy: 97.7%
+----------------------------------------
+ton_iot_network (binary) ztfedtrust_attack: accuracy=97.70%
+exit:0

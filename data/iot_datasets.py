@@ -25,10 +25,12 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import pandas as pd
+import torch
 from torch.utils.data import Dataset
 
 from data.iot_preprocessing import (
     FeatureEncoder,
+    compute_class_weights,
     encode_labels,
     fit_feature_encoder,
     fit_label_classes,
@@ -52,6 +54,7 @@ class IoTExperimentData:
     input_dim: int
     num_classes: int
     class_names: List[str]
+    class_weights: torch.Tensor
 
 
 def _build_attack_pool(
@@ -88,18 +91,29 @@ def _build_partitioned_experiment(
     dirichlet_alpha: float,
     max_rows: Optional[int],
     seed: int,
+    binary_labels: bool = False,
 ) -> IoTExperimentData:
     df = subsample_dataframe(df, max_rows, seed)
+    if binary_labels:
+        if benign_label is None:
+            raise ValueError(
+                "binary_labels=True requires a benign_label to collapse against, but "
+                "this dataset has none (e.g. CICIoT2023's benign-free slice)."
+            )
+        df = df.assign(**{
+            label_column: df[label_column].apply(
+                lambda value: "benign" if value == benign_label else "attack"
+            )
+        })
+        benign_label = "benign"
     feature_columns = [c for c in df.columns if c != label_column]
     class_names = fit_label_classes(df[label_column])
 
     train_df, test_df = split_train_test(df, _TEST_FRACTION, seed)
     encoder = fit_feature_encoder(train_df[feature_columns])
 
-    train_dataset = TabularDataset(
-        encoder.transform(train_df[feature_columns]),
-        encode_labels(train_df[label_column], class_names),
-    )
+    train_labels = encode_labels(train_df[label_column], class_names)
+    train_dataset = TabularDataset(encoder.transform(train_df[feature_columns]), train_labels)
     test_dataset = TabularDataset(
         encoder.transform(test_df[feature_columns]),
         encode_labels(test_df[label_column], class_names),
@@ -117,6 +131,8 @@ def _build_partitioned_experiment(
         train_df, feature_columns, label_column, encoder, class_names, benign_label
     )
 
+    class_weights = compute_class_weights(train_labels, num_classes=len(class_names))
+
     return IoTExperimentData(
         train_client_datasets=train_client_datasets,
         test_dataset=test_dataset,
@@ -124,6 +140,7 @@ def _build_partitioned_experiment(
         input_dim=encoder.input_dim,
         num_classes=len(class_names),
         class_names=class_names,
+        class_weights=class_weights,
     )
 
 
@@ -133,12 +150,28 @@ def _build_natural_client_experiment(
     benign_label: Optional[str],
     max_rows_per_device: Optional[int],
     seed: int,
+    binary_labels: bool = False,
 ) -> IoTExperimentData:
     device_names = sorted(device_dataframes)
     sampled = {
         name: subsample_dataframe(device_dataframes[name], max_rows_per_device, seed)
         for name in device_names
     }
+    if binary_labels:
+        if benign_label is None:
+            raise ValueError(
+                "binary_labels=True requires a benign_label to collapse against, but "
+                "this dataset has none (e.g. CICIoT2023's benign-free slice)."
+            )
+        sampled = {
+            name: df.assign(**{
+                label_column: df[label_column].apply(
+                    lambda value: "benign" if value == benign_label else "attack"
+                )
+            })
+            for name, df in sampled.items()
+        }
+        benign_label = "benign"
     feature_columns = [c for c in next(iter(sampled.values())).columns if c != label_column]
 
     full_pool = pd.concat(sampled.values(), ignore_index=True)
@@ -152,6 +185,8 @@ def _build_natural_client_experiment(
         test_parts[name] = test_df
 
     pooled_train = pd.concat(train_parts.values(), ignore_index=True)
+    pooled_train_labels = encode_labels(pooled_train[label_column], class_names)
+    class_weights = compute_class_weights(pooled_train_labels, num_classes=len(class_names))
     encoder = fit_feature_encoder(pooled_train[feature_columns])
 
     train_client_datasets: Dict[int, Dataset] = {}
@@ -177,6 +212,7 @@ def _build_natural_client_experiment(
         input_dim=encoder.input_dim,
         num_classes=len(class_names),
         class_names=class_names,
+        class_weights=class_weights,
     )
 
 
@@ -195,6 +231,7 @@ def load_ciciot2023(
     dirichlet_alpha: float,
     max_rows: Optional[int],
     seed: int,
+    binary_labels: bool = False,
 ) -> IoTExperimentData:
     """No benign traffic exists in this CICIoT2023 slice, so `benign_label`
     is None — `_build_attack_pool` correctly returns no attack pool."""
@@ -208,6 +245,7 @@ def load_ciciot2023(
         dirichlet_alpha=dirichlet_alpha,
         max_rows=max_rows,
         seed=seed,
+        binary_labels=binary_labels,
     )
 
 
@@ -234,6 +272,7 @@ def load_unsw_nb15(
     dirichlet_alpha: float,
     max_rows: Optional[int],
     seed: int,
+    binary_labels: bool = False,
 ) -> IoTExperimentData:
     df = _load_unsw_nb15_dataframe(data_dir)
     return _build_partitioned_experiment(
@@ -245,6 +284,7 @@ def load_unsw_nb15(
         dirichlet_alpha=dirichlet_alpha,
         max_rows=max_rows,
         seed=seed,
+        binary_labels=binary_labels,
     )
 
 
@@ -271,6 +311,7 @@ def load_ton_iot_network(
     dirichlet_alpha: float,
     max_rows: Optional[int],
     seed: int,
+    binary_labels: bool = False,
 ) -> IoTExperimentData:
     df = _load_ton_iot_network_dataframe(data_dir)
     return _build_partitioned_experiment(
@@ -282,6 +323,7 @@ def load_ton_iot_network(
         dirichlet_alpha=dirichlet_alpha,
         max_rows=max_rows,
         seed=seed,
+        binary_labels=binary_labels,
     )
 
 
@@ -321,7 +363,7 @@ def _load_ton_iot_device_dataframes(data_dir: str) -> Dict[str, pd.DataFrame]:
 
 
 def load_ton_iot_devices(
-    data_dir: str, max_rows_per_device: Optional[int], seed: int
+    data_dir: str, max_rows_per_device: Optional[int], seed: int, binary_labels: bool = False
 ) -> IoTExperimentData:
     """Each of TON_IoT's 7 real device sources becomes one client — no
     Dirichlet/IID partitioning. Devices don't share sensor columns (Fridge
@@ -338,6 +380,7 @@ def load_ton_iot_devices(
         benign_label="normal",
         max_rows_per_device=max_rows_per_device,
         seed=seed,
+        binary_labels=binary_labels,
     )
 
 
@@ -397,7 +440,9 @@ def _load_nbaiot_device_dataframes(data_dir: str) -> Dict[str, pd.DataFrame]:
     }
 
 
-def load_nbaiot(data_dir: str, max_rows_per_device: Optional[int], seed: int) -> IoTExperimentData:
+def load_nbaiot(
+    data_dir: str, max_rows_per_device: Optional[int], seed: int, binary_labels: bool = False
+) -> IoTExperimentData:
     """Each of N-BaIoT's 9 real devices becomes one client. Every device
     ships `benign_traffic.csv` and a `gafgyt_attacks.rar`, but only 7 of the
     9 also ship a `mirai_attacks.rar` (Ennio_Doorbell and
@@ -414,6 +459,7 @@ def load_nbaiot(data_dir: str, max_rows_per_device: Optional[int], seed: int) ->
         benign_label="benign",
         max_rows_per_device=max_rows_per_device,
         seed=seed,
+        binary_labels=binary_labels,
     )
 
 
@@ -428,6 +474,7 @@ def load_iot_experiment(
     partition_type: str,
     dirichlet_alpha: float,
     seed: int,
+    binary_labels: bool = False,
 ) -> IoTExperimentData:
     """Dispatch to the right per-dataset loader by name.
 
@@ -442,15 +489,21 @@ def load_iot_experiment(
     natural-client dataset than for a partitioned one.
     """
     if name == "ciciot2023":
-        return load_ciciot2023(data_dir, num_clients, partition_type, dirichlet_alpha, max_rows, seed)
+        return load_ciciot2023(
+            data_dir, num_clients, partition_type, dirichlet_alpha, max_rows, seed, binary_labels
+        )
     if name == "unsw_nb15":
-        return load_unsw_nb15(data_dir, num_clients, partition_type, dirichlet_alpha, max_rows, seed)
+        return load_unsw_nb15(
+            data_dir, num_clients, partition_type, dirichlet_alpha, max_rows, seed, binary_labels
+        )
     if name == "ton_iot_network":
-        return load_ton_iot_network(data_dir, num_clients, partition_type, dirichlet_alpha, max_rows, seed)
+        return load_ton_iot_network(
+            data_dir, num_clients, partition_type, dirichlet_alpha, max_rows, seed, binary_labels
+        )
     if name == "ton_iot_devices":
-        return load_ton_iot_devices(data_dir, max_rows, seed)
+        return load_ton_iot_devices(data_dir, max_rows, seed, binary_labels)
     if name == "nbaiot":
-        return load_nbaiot(data_dir, max_rows, seed)
+        return load_nbaiot(data_dir, max_rows, seed, binary_labels)
     if name == "botiot":
         raise ValueError(
             "botiot is a disabled placeholder: the real BoT-IoT dataset has not been "

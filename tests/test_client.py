@@ -147,3 +147,30 @@ def test_drop_last_on_size_1_remainder_tabular_model():
         assert result.average_loss > 0
     finally:
         hook.remove()
+
+
+def test_class_weights_change_the_loss_for_an_imbalanced_batch():
+    torch.manual_seed(0)
+    dataset = _make_tabular_dataset(num_samples=64, num_features=10, seed=1)
+    model_unweighted = build_model("mlp", in_channels=10, num_classes=10)
+    model_weighted = build_model("mlp", in_channels=10, num_classes=10)
+    model_weighted.load_state_dict(model_unweighted.state_dict())
+
+    class_weights = torch.ones(10)
+    class_weights[0] = 5.0  # heavily up-weight class 0
+
+    client_unweighted = Client(
+        client_id=0, model_template=model_unweighted, dataset=dataset, device=torch.device("cpu"),
+        batch_size=16, learning_rate=0.01, momentum=0.9, local_epochs=1,
+    )
+    client_weighted = Client(
+        client_id=1, model_template=model_weighted, dataset=dataset, device=torch.device("cpu"),
+        batch_size=16, learning_rate=0.01, momentum=0.9, local_epochs=1, class_weights=class_weights,
+    )
+
+    torch.manual_seed(1)
+    result_unweighted = client_unweighted.train()
+    torch.manual_seed(1)
+    result_weighted = client_weighted.train()
+
+    assert result_unweighted.average_loss != result_weighted.average_loss
